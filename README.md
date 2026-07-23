@@ -35,9 +35,9 @@ runs ──< run_pixels >── pixels     (many-to-many; threshold + board chan
 ```
 
 - **runs** — one acquisition with its detector/beamline settings: run_number,
-  udet_bias, ldet_bias, hv, main, udet, start_time, end_time,
-  linear_position, horizontal_position, exb, udet_armor, ldet_armor,
-  udet_ring, ldet_ring, udet_leakage, ldet_leakage.
+  number_subruns, udet_bias, ldet_bias, hv, main, udet, start_time,
+  end_time, linear_position, horizontal_position, exb, udet_armor,
+  ldet_armor, udet_ring, ldet_ring, udet_leakage, ldet_leakage.
 - **pixels** — the physical detector pixel: pixel_number, detector
   ("upper"/"lower"), and its quasi-static preamp/FET wiring (labels like
   "G6"/"F2" encode the channel; identical mapping on both detectors,
@@ -45,12 +45,18 @@ runs ──< run_pixels >── pixels     (many-to-many; threshold + board chan
   upper pixels are 1-127, lower pixels are the same number + 1000
   (1001-1127); enforced by check constraints.
 - **run_pixels** — a pixel's participation in a run: the source centered
-  over it, threshold, and board_channel (unique within a run), which is
-  reassigned run to run and read from the run's data file.
+  over it and board_channel (unique within a run), which is reassigned
+  run to run and read from the run's data file.
 - **isotopes** — a calibration isotope (e.g. 207Bi, 113Sn).
 - **sources** — a specific physical source: its isotope plus the
   manufacturer id number. Many sources of the same isotope can exist,
   and runs record which one sat over which pixel.
+- **source_installations** — the source frame's installation history
+  (from the Source Installation History slides, seeded from
+  data/source_installations.csv): which source sat in which frame slot
+  from installed_on until removed_on (NULL = still installed). A run's
+  active installation is selected by its start_time. Slot labels follow
+  the convention below.
 - **isotope_peaks** — the peaks an isotope produces; the count varies by
   isotope.
 - **peak_energies** — versioned "known" keV values for an isotope peak:
@@ -75,6 +81,30 @@ runs ──< run_pixels >── pixels     (many-to-many; threshold + board chan
 - **calibration_points** — which (measured peak, known-energy row) pairs
   fed a calibration, so it's always known whether NNDC or simulation
   values were used.
+
+### Source frame slot convention
+
+Slots are labeled `R<row>C<col>`, always in the frame's **"Facing UP"
+orientation** (the view from the upper detector, handle at the bottom):
+
+```
+      C1     C2     C3
+R1  [    ] [    ] [    ]      row 1 = top row, farthest from the handle
+R2  [    ] [    ] [    ]      rows increase toward the handle
+         handle               columns increase left to right
+```
+
+The same rule covers any future holder, whatever its size or shape:
+orient it handle-down as seen from the upper detector, then number rows
+top-to-bottom and columns left-to-right (a single vertical stick is
+`R1C1`, `R2C1`, `R3C1`, ...). Empty slots simply have no row in
+data/source_installations.csv for that period.
+
+Note the two faces: the "Facing DOWN" photos in the installation slides
+show the same frame flipped, so they appear left-right mirrored — slot
+labels always come from the Facing UP view. Likewise the lower detector
+sees the frame mirrored; analysis code applies the same left-right mirror
+it uses for lower-detector pixel coordinates (calibrationnet.geometry).
 
 ## Setup
 

@@ -66,10 +66,15 @@ class Source(Base):
 class SourceInstallation(Base):
     """One source mounted in the source frame for an installation period
     (from the Source Installation History slides). removed_on is NULL for
-    the current installation. slot uses the frame coordinates as seen in
-    the "Facing UP" photos: rows 1 (top) - 2 (handle side), columns 1-3
-    left to right, e.g. "R1C2"; the older 3-slot vertical holder uses
-    "top"/"middle"/"bottom"."""
+    the current installation.
+
+    Slot convention (see README "Source frame slot convention"): labels
+    are "R<row>C<col>" in the frame's Facing UP orientation — the view
+    from the upper detector with the handle at the bottom — rows numbered
+    from 1 at the top (farthest from the handle), columns from 1 at the
+    left. The rule generalizes to any holder shape (a single vertical
+    stick is R1C1, R2C1, ...). The lower detector sees this mirrored
+    left-right, like everything else."""
 
     __tablename__ = "source_installations"
 
