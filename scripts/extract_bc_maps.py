@@ -28,10 +28,16 @@ def main() -> None:
     args = parser.parse_args()
 
     by_run = defaultdict(list)  # run -> [(subrun, path)]
-    for path in args.h5_dir.glob("Run*_*.h5"):
+    for path in args.h5_dir.rglob("Run*_*.h5"):
         m = re.match(r"Run(\d+)_(\d+)\.h5$", path.name)
         if m:
             by_run[int(m.group(1))].append((int(m.group(2)), path))
+    if not by_run:
+        raise SystemExit(
+            f"No files matching Run<run>_<subrun>.h5 found under "
+            f"{args.h5_dir} (searched recursively). Check the path, or "
+            "tell me the actual filename pattern."
+        )
 
     with open(args.out, "w", newline="") as f:
         writer = csv.writer(f)
