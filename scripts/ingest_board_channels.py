@@ -11,7 +11,10 @@ import argparse
 import csv
 from collections import defaultdict
 
+from sqlalchemy import select
+
 from calibrationnet.db import get_session
+from calibrationnet.models import Run
 from calibrationnet.pipeline.board_channels import (
     apply_bc_map,
     clean_bc_pairs,
@@ -32,12 +35,20 @@ def main() -> None:
             for row in csv.DictReader(f):
                 pairs_by_run[int(row["run_number"])].append(
                     (int(row["board_channel"]), int(row["pixel_number"])))
+        skipped = []
         with get_session() as session:
+            known_runs = {r for (r,) in session.execute(select(Run.run_number))}
             for run_number in sorted(pairs_by_run):
+                if run_number not in known_runs:
+                    skipped.append(run_number)
+                    continue
                 bc_map = clean_bc_pairs(pairs_by_run[run_number])
                 n = apply_bc_map(session, run_number, bc_map)
                 session.commit()
                 print(f"run {run_number}: board channels set for {n} pixels")
+        if skipped:
+            print(f"\nskipped {len(skipped)} run(s) not in the database "
+                  f"(no run metadata ingested): {skipped}")
     elif args.run_number and args.h5_file:
         with get_session() as session:
             n = ingest_board_channels(session, args.run_number, args.h5_file)
