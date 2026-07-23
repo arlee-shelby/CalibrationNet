@@ -93,11 +93,14 @@ def ingest_filter_output(
     if skipped:
         print(f"note: skipped {skipped} empty/NaN energy rows in {path}")
     # Pixel 0 is the replay's catch-all for board channels with no pixel
-    # physically plugged in — not a real pixel.
-    junk = per_pixel.pop(0, None)
-    if junk is not None:
-        print(f"note: skipped pixel 0 (unplugged-channel catch-all, "
-              f"{len(junk)} waveforms)")
+    # physically plugged in; pixel 58 (and 1058) has no electronics, and
+    # what the replay attributes to it is an aggregate of junk board
+    # channels. None of it is real detector data.
+    for junk_pixel in (0, 58, 1058):
+        junk = per_pixel.pop(junk_pixel, None)
+        if junk is not None:
+            print(f"note: skipped pixel {junk_pixel} (junk channels, "
+                  f"{len(junk)} waveforms)")
 
     pixels = {
         p.pixel_number: p

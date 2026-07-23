@@ -42,7 +42,13 @@ class TrapFilterOutput(Base):
     source_file: Mapped[Optional[str]] = mapped_column(String(255))
 
     # One entry per waveform: the trap filter's energy estimate, ADC units.
-    energies: Mapped[Optional[list]] = mapped_column(ARRAY(DOUBLE_PRECISION))
+    # deferred: this column is ~99% of the table's bytes (TOASTed out of
+    # line by Postgres), so ORM queries skip it unless explicitly loaded —
+    # use session.query(...).options(undefer(TrapFilterOutput.energies))
+    # or select specific columns / array_length() for counts.
+    energies: Mapped[Optional[list]] = mapped_column(
+        ARRAY(DOUBLE_PRECISION), deferred=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     run_pixel: Mapped["RunPixel"] = relationship(
