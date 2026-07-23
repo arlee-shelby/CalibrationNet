@@ -13,7 +13,7 @@
 #
 #SBATCH -A gts-ajezghani3
 #SBATCH -J calnet-filter-ingest
-#SBATCH --output=filter_ingest_%j.out
+#SBATCH --output=./scripts/slurmoutputs/filter_ingest_%j.out
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
