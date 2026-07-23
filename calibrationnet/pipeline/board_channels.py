@@ -22,14 +22,11 @@ from ..models import Pixel, Run, RunPixel
 BC_MAP_DATASET = "Parameters/BoardChannelToPixelMap"
 
 
-def read_bc_map(h5_path) -> dict:
-    """Return {pixel_number: board_channel} from a run data file, dropping
+def clean_bc_pairs(pairs) -> dict:
+    """{pixel_number: board_channel} from raw (bc, pixel) rows, dropping
     pixel 0, padding rows, and ambiguous multi-BC pixels (reported)."""
-    with h5py.File(h5_path, "r") as f:
-        rows = f[BC_MAP_DATASET][()]
-
     candidates = defaultdict(set)
-    for board_channel, pixel_number in rows:
+    for board_channel, pixel_number in pairs:
         if pixel_number == 0:  # unplugged catch-all / padding
             continue
         candidates[int(pixel_number)].add(int(board_channel))
@@ -44,18 +41,28 @@ def read_bc_map(h5_path) -> dict:
     return bc_map
 
 
+def read_bc_map(h5_path) -> dict:
+    """Cleaned board-channel map straight from a run data file."""
+    with h5py.File(h5_path, "r") as f:
+        rows = f[BC_MAP_DATASET][()]
+    return clean_bc_pairs(rows)
+
+
 def ingest_board_channels(session: Session, run_number: int, h5_path) -> int:
-    """Set board_channel on the run's run_pixels from the data file's map,
-    creating missing run_pixels. Returns the number of pixels mapped.
-    Does not commit."""
+    """Set board_channel on the run's run_pixels from the data file's map.
+    Returns the number of pixels mapped. Does not commit."""
+    return apply_bc_map(session, run_number, read_bc_map(h5_path))
+
+
+def apply_bc_map(session: Session, run_number: int, bc_map: dict) -> int:
+    """Write a cleaned {pixel_number: board_channel} map onto the run's
+    run_pixels, creating missing ones. Does not commit."""
     run = session.execute(
         select(Run).where(Run.run_number == run_number)
     ).scalar_one_or_none()
     if run is None:
         raise ValueError(f"Run {run_number} is not in the database — "
                          "ingest it first (scripts/ingest_run.py).")
-
-    bc_map = read_bc_map(h5_path)
 
     pixels = {
         p.pixel_number: p
