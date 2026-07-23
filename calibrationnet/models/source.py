@@ -80,7 +80,6 @@ class SourceInstallation(Base):
     installed_on: Mapped[date]
     removed_on: Mapped[Optional[date]]  # NULL = still installed
     slot: Mapped[str] = mapped_column(String(20))
-    facing: Mapped[Optional[str]] = mapped_column(String(10))  # "up"|"down"
     notes: Mapped[Optional[str]]
 
     source: Mapped["Source"] = relationship(back_populates="installations")

@@ -36,7 +36,6 @@ def main() -> None:
                     removed_on=(date.fromisoformat(row["removed_on"])
                                 if row["removed_on"] else None),
                     slot=row["slot"],
-                    facing=row["facing"] or None,
                     notes=row["notes"] or None,
                 ))
                 n += 1
