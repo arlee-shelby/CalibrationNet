@@ -1,0 +1,134 @@
+"""Ingest trap filter output CSVs into trap_filter_outputs.
+
+A filter output file holds one filter pass over one run's waveforms:
+
+    pixel,energy
+    1052,2910.453880871706
+    ...
+
+one row per waveform. Rise time and flat top are encoded in the filename
+(e.g. filter_output_rt100_ft10.csv); fall time is not, so the caller
+supplies it.
+
+The full optimization scan (~26 rise times x ~20 flat tops per run) stays
+on disk — only curated outputs (the per-pixel optimized settings, plus
+any comparison settings) are ingested, labeled with why they're stored.
+"""
+
+import csv
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models import Pixel, Run, RunPixel, TrapFilterOutput
+
+
+def parse_filter_filename(path) -> dict:
+    """Extract trap settings from a name like filter_output_rt100_ft10.csv."""
+    name = Path(path).name
+    match = re.search(r"rt(\d+(?:\.\d+)?)_ft(\d+(?:\.\d+)?)", name)
+    if not match:
+        raise ValueError(
+            f"Cannot parse rise time / flat top from filename {name!r} "
+            "(expected e.g. filter_output_rt100_ft10.csv)"
+        )
+    return {"trap_rise": float(match.group(1)),
+            "trap_flattop": float(match.group(2))}
+
+
+def read_filter_output(path) -> tuple:
+    """Read a filter output CSV into ({pixel_number: [energies...]}, skipped).
+
+    Rows with an empty/NaN energy (pandas writes NaN as an empty field)
+    are skipped and counted rather than stored."""
+    energies = defaultdict(list)
+    skipped = 0
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        if [h.strip().lower() for h in header[:2]] != ["pixel", "energy"]:
+            raise ValueError(f"Unexpected header {header!r} in {path}")
+        for row in reader:
+            value = row[1].strip()
+            if not value or value.lower() == "nan":
+                skipped += 1
+                continue
+            energies[int(row[0])].append(float(value))
+    return dict(energies), skipped
+
+
+def ingest_filter_output(
+    session: Session,
+    run_number: int,
+    path,
+    trap_falltime: float,
+    label: Optional[str] = None,
+) -> list:
+    """Store one filter output file: one TrapFilterOutput per pixel found
+    in the file, under the given run. Creates missing run_pixels (bare —
+    board_channel/source/threshold can be filled by later ingest steps).
+    Replaces any existing output with the same (run_pixel, settings), so
+    re-ingesting a file is idempotent. Does not commit."""
+    run = session.execute(
+        select(Run).where(Run.run_number == run_number)
+    ).scalar_one_or_none()
+    if run is None:
+        raise ValueError(f"Run {run_number} is not in the database — "
+                         "ingest it first (scripts/ingest_run.py).")
+
+    settings = parse_filter_filename(path)
+    settings["trap_falltime"] = trap_falltime
+    per_pixel, skipped = read_filter_output(path)
+    if skipped:
+        print(f"note: skipped {skipped} empty/NaN energy rows in {path}")
+    # Pixel 0 is the replay's catch-all for board channels with no pixel
+    # physically plugged in — not a real pixel.
+    junk = per_pixel.pop(0, None)
+    if junk is not None:
+        print(f"note: skipped pixel 0 (unplugged-channel catch-all, "
+              f"{len(junk)} waveforms)")
+
+    pixels = {
+        p.pixel_number: p
+        for p in session.scalars(
+            select(Pixel).where(Pixel.pixel_number.in_(per_pixel))
+        )
+    }
+    unknown = sorted(set(per_pixel) - set(pixels))
+    if unknown:
+        raise ValueError(f"File references pixels not in the database: "
+                         f"{unknown[:10]}{'...' if len(unknown) > 10 else ''}")
+
+    run_pixels = {
+        rp.pixel_id: rp
+        for rp in session.scalars(
+            select(RunPixel).where(RunPixel.run_id == run.id)
+        )
+    }
+
+    outputs = []
+    for pixel_number, pixel_energies in sorted(per_pixel.items()):
+        pixel = pixels[pixel_number]
+        rp = run_pixels.get(pixel.id)
+        if rp is None:
+            rp = RunPixel(run=run, pixel=pixel)
+            session.add(rp)
+            run_pixels[pixel.id] = rp
+        for old in [t for t in rp.trap_filter_outputs
+                    if (t.trap_rise, t.trap_flattop, t.trap_falltime)
+                    == (settings["trap_rise"], settings["trap_flattop"],
+                        settings["trap_falltime"])]:
+            session.delete(old)
+        outputs.append(TrapFilterOutput(
+            run_pixel=rp,
+            energies=pixel_energies,
+            label=label,
+            source_file=Path(path).name,
+            **settings,
+        ))
+    session.add_all(outputs)
+    return outputs

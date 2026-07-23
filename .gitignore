@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.DS_Store
+filter_output_*.csv
+Run8622_0.h5
+Run8622_LowerDetHitMap.png
+Run8622_UpperDetHitMap.png
+Source Installation History_ Fall 2025-Present.pdf
