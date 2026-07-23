@@ -28,7 +28,9 @@ from ..models import Pixel, Run, RunPixel, TrapFilterOutput
 
 
 def parse_filter_filename(path) -> dict:
-    """Extract trap settings from a name like filter_output_rt100_ft10.csv."""
+    """Extract trap settings — and the run number if present — from a name
+    like Run8622_filter_output_rt1250_ft50.csv. Settings are in units of
+    4 ns time bins."""
     name = Path(path).name
     match = re.search(r"rt(\d+(?:\.\d+)?)_ft(\d+(?:\.\d+)?)", name)
     if not match:
@@ -36,8 +38,12 @@ def parse_filter_filename(path) -> dict:
             f"Cannot parse rise time / flat top from filename {name!r} "
             "(expected e.g. filter_output_rt100_ft10.csv)"
         )
-    return {"trap_rise": float(match.group(1)),
-            "trap_flattop": float(match.group(2))}
+    parsed = {"trap_rise": float(match.group(1)),
+              "trap_flattop": float(match.group(2))}
+    run_match = re.search(r"Run(\d+)", name, re.I)
+    if run_match:
+        parsed["run_number"] = int(run_match.group(1))
+    return parsed
 
 
 def read_filter_output(path) -> tuple:
@@ -81,6 +87,7 @@ def ingest_filter_output(
                          "ingest it first (scripts/ingest_run.py).")
 
     settings = parse_filter_filename(path)
+    settings.pop("run_number", None)  # caller resolves the run explicitly
     settings["trap_falltime"] = trap_falltime
     per_pixel, skipped = read_filter_output(path)
     if skipped:
@@ -123,12 +130,13 @@ def ingest_filter_output(
                     == (settings["trap_rise"], settings["trap_flattop"],
                         settings["trap_falltime"])]:
             session.delete(old)
-        outputs.append(TrapFilterOutput(
+        output = TrapFilterOutput(
             run_pixel=rp,
             energies=pixel_energies,
             label=label,
             source_file=Path(path).name,
             **settings,
-        ))
-    session.add_all(outputs)
+        )
+        session.add(output)
+        outputs.append(output)
     return outputs

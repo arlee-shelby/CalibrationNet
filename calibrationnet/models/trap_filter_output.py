@@ -27,6 +27,9 @@ class TrapFilterOutput(Base):
         ForeignKey("run_pixels.id"), index=True
     )
 
+    # Units: 4 ns time bins (the DAQ sample width) — e.g. the standard nabPy
+    # setting rise/flattop/fall = 1250/50/1250 bins = 5000/200/5000 ns.
+    # Stored unconverted, as used in analysis and filenames.
     trap_rise: Mapped[Optional[float]]
     trap_flattop: Mapped[Optional[float]]
     trap_falltime: Mapped[Optional[float]]
