@@ -20,6 +20,11 @@
 #SBATCH -t 4:00:00
 #SBATCH --qos=embers
 #SBATCH --requeue
+# Granite Rapids nodes: measurably faster for this dask/numba work, and
+# worth asking for whenever a task wants a lot of cpus. Drop these two
+# lines if that partition is unavailable or backlogged.
+#SBATCH -C graniterapids
+#SBATCH -p cpu-gnr
 
 set -euo pipefail
 

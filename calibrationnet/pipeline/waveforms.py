@@ -12,6 +12,7 @@ energies free of any waveform taken at another source position.
 """
 
 import os
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -46,12 +47,24 @@ def _headers(nab, path: Path, wave_type: str):
     return waves, waves.headers()
 
 
+def available_subruns(directory, run_number: int) -> list:
+    """Sorted subrun indices that actually have a file in this directory."""
+    pattern = re.compile(rf"Run{run_number}_(\d+)\.h5$")
+    found = []
+    for path in Path(directory).glob(f"Run{run_number}_*.h5"):
+        match = pattern.match(path.name)
+        if match:
+            found.append(int(match.group(1)))
+    return sorted(found)
+
+
 def subrun_span(directory, run_number: int, subrun: int,
                 wave_type: str = "singles"):
     """(first, last) 'unix timestamp' ticks in a subrun, or None if the file
     is missing or holds no waves of this type."""
     path = subrun_file(directory, run_number, subrun)
     if not path.exists():
+        print(f"note: {path} does not exist")
         return None
     nab = import_nabpy()
     try:
@@ -60,66 +73,73 @@ def subrun_span(directory, run_number: int, subrun: int,
         print(f"note: could not read headers from {path.name}: {exc}")
         return None
     if len(headers) == 0:
+        print(f"note: {path.name} holds no '{wave_type}' waves")
         return None
     stamps = headers["unix timestamp"]
     return float(stamps.min()), float(stamps.max())
 
 
-def find_subrun_range(directory, run_number: int, n_subruns: int,
-                      start_ticks: float, end_ticks: float,
-                      wave_type: str = "singles") -> range:
+def find_subruns(directory, run_number: int,
+                 start_ticks: float, end_ticks: float,
+                 wave_type: str = "singles") -> list:
     """The subruns that can hold waveforms inside [start_ticks, end_ticks].
 
-    Binary searches on subrun time spans — subruns are written in time
-    order — so indexing a 600-subrun run costs about a dozen header reads
-    instead of opening every file.
+    Subruns are written in time order, so this binary searches on each
+    candidate's FIRST timestamp: a dozen header reads instead of opening
+    all 600-odd files. One extra subrun is included at each end, since
+    segment_energies masks by timestamp anyway and over-including is free
+    of correctness risk while under-including would silently lose data.
+
+    Raises FileNotFoundError if the directory holds no files for this run —
+    which is otherwise indistinguishable from a genuine lack of overlap.
     """
-    def span(subrun):
-        return subrun_span(directory, run_number, subrun, wave_type)
+    subruns = available_subruns(directory, run_number)
+    if not subruns:
+        raise FileNotFoundError(
+            f"no Run{run_number}_*.h5 files in {directory} — check the "
+            "directory (-d) and that the run's data has been replayed there."
+        )
 
-    def first_reaching(target):
-        """Lowest subrun whose last waveform is at or after target."""
-        low, high, found = 0, n_subruns - 1, n_subruns
+    cache = {}
+
+    def first_stamp(subrun):
+        if subrun not in cache:
+            limits = subrun_span(directory, run_number, subrun, wave_type)
+            cache[subrun] = None if limits is None else limits[0]
+        return cache[subrun]
+
+    def last_at_or_before(target):
+        """Index into `subruns` of the last one starting at/before target."""
+        low, high, found = 0, len(subruns) - 1, -1
         while low <= high:
             mid = (low + high) // 2
-            limits = span(mid)
-            if limits is None:                     # gap: search both ways
-                probe = next((s for s in range(mid + 1, high + 1)
-                              if span(s) is not None), None)
-                if probe is None:
-                    high = mid - 1
-                    continue
-                mid, limits = probe, span(probe)
-            if limits[1] >= target:
-                found, high = mid, mid - 1
-            else:
+            stamp = first_stamp(subruns[mid])
+            if stamp is None:                      # unreadable: step past it
                 low = mid + 1
-        return found
-
-    def last_starting_before(target):
-        """Highest subrun whose first waveform is at or before target."""
-        low, high, found = 0, n_subruns - 1, -1
-        while low <= high:
-            mid = (low + high) // 2
-            limits = span(mid)
-            if limits is None:
-                probe = next((s for s in range(mid - 1, low - 1, -1)
-                              if span(s) is not None), None)
-                if probe is None:
-                    low = mid + 1
-                    continue
-                mid, limits = probe, span(probe)
-            if limits[0] <= target:
+                continue
+            if stamp <= target:
                 found, low = mid, mid + 1
             else:
                 high = mid - 1
         return found
 
-    first = first_reaching(start_ticks)
-    last = last_starting_before(end_ticks)
-    if first > last or first >= n_subruns or last < 0:
-        return range(0)
-    return range(first, last + 1)
+    # The subrun containing the window's start is the last one that began
+    # at or before it; everything up to the last one beginning before the
+    # window's end can contribute.
+    first_index = max(last_at_or_before(start_ticks), 0)
+    last_index = last_at_or_before(end_ticks)
+    if last_index < 0:
+        readable = [s for s in subruns if first_stamp(s) is not None]
+        raise ValueError(
+            f"every subrun of run {run_number} starts after this segment's "
+            f"window ends — {len(readable)} readable of {len(subruns)} files. "
+            "Check that the segment times and the waveform timestamps use "
+            "the same clock."
+        )
+
+    lo = max(first_index - 1, 0)
+    hi = min(last_index + 1, len(subruns) - 1)
+    return subruns[lo:hi + 1]
 
 
 def segment_energies(directory, run_number: int, subruns,

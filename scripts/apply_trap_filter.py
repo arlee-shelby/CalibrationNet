@@ -21,7 +21,8 @@ from calibrationnet.db import get_session
 from calibrationnet.models import RunSegment
 from calibrationnet.pipeline.trap_filter import ingest_filter_output
 from calibrationnet.pipeline.waveforms import (
-    find_subrun_range,
+    available_subruns,
+    find_subruns,
     save_filter_output,
     segment_energies,
     to_ticks,
@@ -70,24 +71,21 @@ def main() -> None:
               f"position {segment.linear_position}/"
               f"{segment.horizontal_position}")
 
-    if not n_subruns:
-        raise SystemExit(f"run {args.run} has no recorded subrun count.")
-
     # 2. Only the subruns overlapping this segment's dwell. A single-segment
     #    run covers everything, so skip the search and take them all.
     if n_segments == 1:
-        subruns = range(n_subruns)
-        mask_window = None
-    else:
-        subruns = find_subrun_range(args.directory, args.run, n_subruns,
-                                    *window, wave_type=args.wave)
-        mask_window = window
+        subruns = available_subruns(args.directory, args.run)
         if not subruns:
             raise SystemExit(
-                f"no subrun of run {args.run} overlaps segment "
-                f"{args.segment}'s window — nothing to do."
+                f"no Run{args.run}_*.h5 files in {args.directory} — check -d."
             )
-    print(f"subruns {subruns.start}-{subruns.stop - 1} of 0-{n_subruns - 1}")
+        mask_window = None
+    else:
+        subruns = find_subruns(args.directory, args.run, *window,
+                               wave_type=args.wave)
+        mask_window = window
+    print(f"using subruns {subruns[0]}-{subruns[-1]} "
+          f"({len(subruns)} files, run has {n_subruns})")
 
     # 3. Filter.
     per_pixel = segment_energies(

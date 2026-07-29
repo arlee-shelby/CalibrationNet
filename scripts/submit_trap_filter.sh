@@ -23,8 +23,11 @@ FALLTIME=${5:-1250}
 WAVE=${6:-singles}
 LABEL=${7:-nabpy-standard}
 
-# Concurrency cap (account limit is 50) and max tasks per array submission.
-MAX_CONCURRENT=${MAX_CONCURRENT:-50}
+# How many tasks OF THIS ARRAY may run at once (SLURM's %N throttle). It is
+# per-array, not per-account: any other jobs you have running count against
+# the 50-job account limit separately, so leave headroom or the surplus just
+# sits pending. MAX_ARRAY caps tasks per array submission (MaxArraySize).
+MAX_CONCURRENT=${MAX_CONCURRENT:-45}
 MAX_ARRAY=${MAX_ARRAY:-1000}
 
 OUT_DIR=data/TrapFilterData
