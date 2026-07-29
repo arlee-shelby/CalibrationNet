@@ -42,7 +42,25 @@ if [ -z "${RUN:-}" ]; then
 fi
 
 cd "${SLURM_SUBMIT_DIR}"
-source "${CALNET_VENV:-$HOME/Manitoba}/bin/activate"
+
+# By default the job inherits the environment you submitted from (SLURM
+# exports it), so `source <your env>/bin/activate` before submitting and
+# nothing needs configuring here. Set CALNET_VENV to activate a specific
+# environment instead.
+if [ -n "${CALNET_VENV:-}" ]; then
+    source "${CALNET_VENV}/bin/activate"
+fi
+
+# Fail immediately with a useful message rather than part-way through a
+# segment: this needs ONE environment providing both nabPy and this package
+# (see "Setup" in README.md).
+if ! python -c "from calibrationnet.pipeline.waveforms import import_nabpy
+import_nabpy()"; then
+    echo "ERROR: the active python cannot run this job. It needs ONE"
+    echo "environment providing both nabPy and calibrationnet — see 'Setup'"
+    echo "in README.md. Activate one and resubmit, or set CALNET_VENV."
+    exit 1
+fi
 
 echo "task ${SLURM_ARRAY_TASK_ID} -> run ${RUN} segment ${SEGMENT}"
 python scripts/apply_trap_filter.py \

@@ -200,16 +200,95 @@ stage was moving belong to no segment and are simply never filtered.
 
 ## Setup
 
+Two things vary by machine: **which python environment** you need, and
+**which `.env` variables** you fill in. They depend only on what you plan
+to run.
+
+| What you want to do | Python packages needed | `.env` variables |
+|---|---|---|
+| Query the database, draw hit maps, assign sources | this package (`pip install -e .`) | `DATABASE_URL` |
+| Ingest runs and their segments | same | `+ SC_DATABASE_URL` (and optionally `POSITIONS_DATABASE_URL`) |
+| Apply the trap filter to raw waveforms | this package **and nabPy** | `DATABASE_URL` (`+ NABPY_PATH` if nabPy is not importable) |
+
+Only the last row is awkward, because nabPy brings h5py/numba/dask with it.
+Everything else is a plain `pip install -e .`.
+
+### A database-only environment
+
+Enough for ingesting runs, hit maps, and source assignment:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
+cp .env.example .env      # then fill in DATABASE_URL (and SC_DATABASE_URL)
+```
 
-cp .env.example .env   # then edit with your Postgres credentials
+### An environment that can also apply the trap filter
 
-# create the initial migration from the models, then apply it
-alembic revision --autogenerate -m "initial schema"
+This needs nabPy in the *same* environment as this package, since
+`scripts/apply_trap_filter.py` both filters waveforms and writes to the
+database. Two ways to get there:
+
+**If you already have a working nabPy environment** (likely on a cluster —
+it is whatever you activate before running nabPy), just add this package to
+it. This pulls in only sqlalchemy/psycopg/alembic/python-dotenv, none of
+which depend on numpy or numba, so the nabPy stack is undisturbed:
+
+```bash
+source <your nabPy env>/bin/activate
+pip install -e <path to this repo>
+```
+
+**If you have no nabPy environment yet**, build a combined one from source
+checkouts of pyNab and deltarice:
+
+```bash
+./scripts/setup_env.sh <new env dir> <pyNab checkout> <deltarice checkout>
+```
+
+It pins numpy/llvmlite/numba to a tested-good set (newer llvmlite often has
+no wheel and fails to build), installs nabPy and deltaRice, then installs
+this package, and finally verifies that everything imports.
+
+Either way, check the result:
+
+```bash
+python -c "from calibrationnet.pipeline.waveforms import import_nabpy; \
+import_nabpy(); from calibrationnet.db import get_engine; \
+get_engine().connect(); print('nabPy + database OK')"
+```
+
+If `import nabPy` fails but nabPy exists as a source checkout, set
+`NABPY_PATH` in `.env` to the directory containing the `nabPy` package
+(the `src/` directory of a pyNab checkout) rather than installing it.
+
+### Applying migrations
+
+The schema is managed by Alembic. On a database that already has the
+tables, bring it up to date with:
+
+```bash
 alembic upgrade head
 ```
+
+Creating a fresh database instead: `alembic upgrade head` builds the whole
+schema from the migrations in `alembic/versions/`. After changing a model,
+generate a migration with
+`alembic revision --autogenerate -m "what changed"`, read the generated
+file, then apply it.
+
+### Running on a cluster
+
+The batch scripts assume you activate your environment and then submit —
+SLURM copies the submitting environment into the job, so nothing extra is
+configured. `scripts/apply_trap_filter.sh` checks at task start that both
+nabPy and this package import, and fails immediately with a clear message
+if not. Set `CALNET_VENV` only if you want a job to activate a specific
+environment regardless of how you submitted.
+
+On the machine that hosts the database, point `DATABASE_URL` straight at
+the host instead of `localhost` — no tunnel, and much faster for bulk
+ingest.
 
 ## Usage
 
