@@ -14,6 +14,7 @@
 
 set -euo pipefail
 
+# Run this from the repo root.
 RUN_LIST=${1:?usage: submit_trap_filter.sh <run_list.txt> <h5_dir> [rt ft fall wave]}
 H5_DIR=${2:?usage: submit_trap_filter.sh <run_list.txt> <h5_dir> [rt ft fall wave]}
 RISETIME=${3:-1250}
