@@ -54,6 +54,40 @@ def parse_filter_filename(path) -> dict:
     return parsed
 
 
+def segments_missing_output(session: Session, run_numbers,
+                            trap_rise: float, trap_flattop: float,
+                            trap_falltime: float,
+                            label: Optional[str] = None) -> dict:
+    """{run_number: [segment_index, ...]} for segments that do NOT yet hold
+    a filter output with these settings.
+
+    The database is the shared state between parallel filter jobs, so this
+    is how any of them (or a person) can tell what is left to do. Runs with
+    nothing missing are absent from the result.
+    """
+    done = set(session.execute(
+        select(RunPixel.run_number, RunPixel.segment_index)
+        .join(TrapFilterOutput,
+              TrapFilterOutput.run_pixel_id == RunPixel.id)
+        .where(RunPixel.run_number.in_(run_numbers),
+               TrapFilterOutput.trap_rise == trap_rise,
+               TrapFilterOutput.trap_flattop == trap_flattop,
+               TrapFilterOutput.trap_falltime == trap_falltime,
+               TrapFilterOutput.label == label)
+        .distinct()
+    ).all())
+
+    missing = defaultdict(list)
+    for run_number, segment_index in session.execute(
+        select(RunSegment.run_number, RunSegment.segment_index)
+        .where(RunSegment.run_number.in_(run_numbers))
+        .order_by(RunSegment.run_number, RunSegment.segment_index)
+    ).all():
+        if (run_number, segment_index) not in done:
+            missing[run_number].append(segment_index)
+    return dict(missing)
+
+
 def read_filter_output(path) -> tuple:
     """Read a filter output CSV into ({pixel_number: [energies...]}, skipped).
 

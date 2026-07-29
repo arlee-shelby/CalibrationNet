@@ -19,7 +19,10 @@ from pathlib import Path
 
 from calibrationnet.db import get_session
 from calibrationnet.models import RunSegment
-from calibrationnet.pipeline.trap_filter import ingest_filter_output
+from calibrationnet.pipeline.trap_filter import (
+    ingest_filter_output,
+    segments_missing_output,
+)
 from calibrationnet.pipeline.waveforms import (
     available_subruns,
     find_subruns,
@@ -115,6 +118,20 @@ def main() -> None:
         )
         session.commit()
         print(f"ingested {len(outputs)} pixel outputs")
+
+        # Parallel tasks share only the database, so ask it whether this
+        # task happened to be the last one for the run.
+        left = segments_missing_output(
+            session, [args.run], args.risetime, args.flattop, args.falltime,
+            args.label,
+        ).get(args.run, [])
+        if left:
+            print(f"run {args.run}: {n_segments - len(left)}/{n_segments} "
+                  f"segments ingested, {len(left)} to go")
+        else:
+            print(f"RUN {args.run} COMPLETE: all {n_segments} segments have "
+                  f"rt={args.risetime} ft={args.flattop} "
+                  f"fall={args.falltime} ({args.label})")
 
     if args.keep_csv:
         print(f"kept {csv_path}")

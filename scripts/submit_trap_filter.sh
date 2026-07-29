@@ -48,6 +48,7 @@ echo "$TOTAL segment(s) to process -> $MANIFEST"
 
 # One array per MAX_ARRAY manifest lines; each task adds its offset.
 OFFSET=0
+JOB_IDS=()
 while [ "$OFFSET" -lt "$TOTAL" ]; do
     REMAINING=$((TOTAL - OFFSET))
     COUNT=$(( REMAINING < MAX_ARRAY ? REMAINING : MAX_ARRAY ))
@@ -57,10 +58,28 @@ while [ "$OFFSET" -lt "$TOTAL" ]; do
         scripts/apply_trap_filter.sh \
         "$MANIFEST" "$OFFSET" "$H5_DIR" \
         "$RISETIME" "$FLATTOP" "$FALLTIME" "$WAVE" "$LABEL")
+    JOB_IDS+=("$JOB")
     echo "submitted array job ${JOB}: manifest lines $((OFFSET + 1))-$((OFFSET + COUNT))"
     OFFSET=$((OFFSET + COUNT))
 done
 
+# One short job that runs after every array task finishes (whatever their
+# exit status) and writes a single per-run progress report — the
+# unambiguous "is the whole batch done?" answer, instead of reading
+# scattered per-task logs.
+DEPENDENCY=$(IFS=:; echo "${JOB_IDS[*]}")
+SUMMARY=$(sbatch --parsable \
+    --dependency=afterany:"${DEPENDENCY}" --kill-on-invalid-dep=yes \
+    -A "${SLURM_ACCOUNT:-gts-ajezghani3}" -J calnet-trapfilter-summary \
+    -N1 --cpus-per-task=1 --mem=4gb -t 10:00 \
+    --output="${OUT_DIR}/slurmout/trapfilter_summary_%j.out" \
+    --wrap="cd '$PWD' && python scripts/pending_segments.py \
+        --runs-file '$RUN_LIST' -rt $RISETIME -ft $FLATTOP \
+        -fall $FALLTIME --label '$LABEL' --summary")
+echo "submitted summary job ${SUMMARY} (runs after the array finishes)"
+
 echo
-echo "watch with:  squeue -u \$USER   |   tail -f ${OUT_DIR}/slurmout/trapfilter_*.out"
-echo "re-run this script later to pick up anything that failed or was preempted."
+echo "progress:  squeue -u \$USER"
+echo "when done: cat ${OUT_DIR}/slurmout/trapfilter_summary_${SUMMARY}.out"
+echo "or check any time:  python scripts/pending_segments.py --runs-file $RUN_LIST --summary"
+echo "re-run this script to pick up anything that failed or was preempted."
