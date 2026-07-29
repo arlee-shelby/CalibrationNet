@@ -6,7 +6,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
-    from .run import Run
     from .run_pixel import RunPixel
 
 
@@ -32,8 +31,9 @@ class Pixel(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    pixel_number: Mapped[int] = mapped_column(unique=True, index=True)
+    # Natural primary key: pixel numbers are unique across both detectors
+    # (1-127 upper, 1001-1127 lower) and never change.
+    pixel_number: Mapped[int] = mapped_column(primary_key=True)
     detector: Mapped[str] = mapped_column(String(10))  # "upper" | "lower"
 
     # Quasi-static wiring (labels like "G6"/"F2" encode the channel).
@@ -44,9 +44,6 @@ class Pixel(Base):
 
     run_pixels: Mapped[List["RunPixel"]] = relationship(
         back_populates="pixel", cascade="all, delete-orphan"
-    )
-    runs: Mapped[List["Run"]] = relationship(
-        secondary="run_pixels", viewonly=True
     )
 
     def __repr__(self) -> str:

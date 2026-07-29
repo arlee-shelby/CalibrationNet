@@ -41,6 +41,21 @@ def mirrored_x(x: float) -> float:
     return (x_left + x_right) - x
 
 
+# Built once at import: physical_position runs inside frame-search loops.
+_UPPER = pixel_positions()
+_LOWER = {p: (mirrored_x(x), y) for p, (x, y) in _UPPER.items()}
+
+
+def physical_position(pixel_number: int, detector: str) -> tuple:
+    """Physical (x, y) of a pixel, in coordinates shared by both detectors.
+
+    Accepts either detector's numbering (1-127 or 1001-1127). The lower
+    detector is mirrored left-right because the two detectors face each
+    other, so one physical location under the source frame maps to the
+    same (x, y) on both."""
+    return (_LOWER if detector == "lower" else _UPPER)[pixel_number % 1000]
+
+
 def neighbors(pixel: int) -> set:
     """Pixel numbers (1-127) adjacent to the given pixel on the hex grid."""
     pos = pixel_positions()

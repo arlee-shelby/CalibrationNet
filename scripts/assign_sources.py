@@ -1,9 +1,10 @@
-"""Assign sources to run_pixels using the global smooth frame model:
-each detector's slot centers are fit as a linear function of the run's
-(linear_position, 2D position) across ALL runs at once, so predictions
-cannot jump clusters between neighboring scan positions; each slot is
-then snapped jointly (distinct clusters, tight radius) and pixels within
-one ring are claimed.
+"""Assign sources to run_pixels, one run SEGMENT at a time (a segment is
+a period of constant source position — see calibrationnet.models.
+RunSegment). For each segment the rigid source frame is placed by the
+single translation that best explains the excess counts under all its
+slots at once, primed by the position readback in that segment's own
+convention; each slot then snaps to a distinct cluster and claims the
+pixels within one ring.
 
 Workflow:
   1. python scripts/assign_sources.py        # writes the review CSV
@@ -27,31 +28,26 @@ import os
 from sqlalchemy import select
 
 from calibrationnet.db import get_session
+from calibrationnet.geometry import physical_position
 from calibrationnet.models import (
-    Pixel,
-    Run,
     RunPixel,
+    RunSegment,
     Source,
     SourceInstallation,
 )
 from calibrationnet.pipeline.source_assignment import (
-    ANCHOR_POSITIONS,
-    ANCHOR_RUN,
     MEMBER_RADIUS,
     VERIFY_RADIUS,
-    X_PER_INCH,
-    Y_PER_2D,
     assign_from_preds,
     compute_baselines,
     excess_map,
     fetch_all_counts,
-    fit_affine_trend,
+    fit_position_trend,
     locate_frame,
-    support_at,
-    physical_position,
-    predict_fixed,
+    predict_prior,
     predict_trend,
-    slot_offsets_from_anchors,
+    slot_offsets,
+    support_at,
 )
 
 REVIEW_CSV = "source_assignment_review.csv"
@@ -59,9 +55,9 @@ FLAG_DIST = 0.95      # verification moved almost a full radius -> check
 MIN_EXCESS = 2.0      # peak must be at least 2x its own baseline
 
 
-def slot_sources_for(session, run: Run) -> dict:
-    """{slot: (source_id, source_label)} active at the run's start."""
-    day = run.start_time.date()
+def slot_sources_for(session, segment: RunSegment) -> dict:
+    """{slot: (source_id, source_label)} installed during this segment."""
+    day = (segment.start_time or segment.run.start_time).date()
     rows = session.execute(
         select(SourceInstallation.slot, Source.id, Source.label)
         .join(Source, SourceInstallation.source_id == Source.id)
@@ -90,51 +86,79 @@ def generate_review(label: str, force: bool) -> None:
     baselines = compute_baselines(counts)
 
     with get_session() as session:
-        runs = {r.run_number: r for r in session.scalars(select(Run))}
-        run_positions = {
-            rn: (runs[rn].linear_position, runs[rn].horizontal_position)
-            for rn in counts
+        segments = {
+            (seg.run_number, seg.segment_index): seg
+            for seg in session.scalars(select(RunSegment))
         }
-        slot_maps = {rn: slot_sources_for(session, runs[rn])
-                     for rn in counts}
+        missing = sorted(k for k in counts if k not in segments)
+        if missing:
+            raise SystemExit(f"filter outputs exist for segments not in the "
+                             f"database: {missing[:5]}")
+        key_positions = {
+            k: (segments[k].linear_position, segments[k].horizontal_position)
+            for k in counts
+        }
+        conventions = {k: segments[k].position_convention for k in counts}
+        slot_maps = {k: slot_sources_for(session, segments[k]) for k in counts}
 
-    offsets = {det: slot_offsets_from_anchors(det)
-               for det in ("upper", "lower")}
-    excesses = {rn: {det: excess_map(counts[rn][det], baselines[det])
-                     for det in ("upper", "lower")}
-                for rn in counts}
+    unplaceable = sorted(k for k in counts
+                         if key_positions[k][0] is None
+                         or key_positions[k][1] is None)
+    if unplaceable:
+        print(f"note: {len(unplaceable)} segment(s) have no recorded position "
+              f"and are skipped: {unplaceable[:5]}")
 
-    # Round 1: locate each run's rigid frame with a loose fixed-slope
-    # prior; Round 2: refit the cross-run affine trend from those frames
-    # and relocate with the tighter, data-driven prior.
-    t_by_run = {"upper": {}, "lower": {}}
-    for rn in sorted(counts):
-        lin, hor = run_positions[rn]
+    keys = [k for k in sorted(counts) if k not in unplaceable]
+    excesses = {k: {det: excess_map(counts[k][det], baselines[det])
+                    for det in ("upper", "lower")}
+                for k in keys}
+    # Slot offsets are a property of the physical frame, so they only
+    # depend on the convention's anchor, not on the segment.
+    offsets = {}
+    for k in keys:
+        convention = conventions[k]
         for det in ("upper", "lower"):
-            prior = predict_fixed(det, "R1C2", lin, hor)
-            t_by_run[det][rn] = locate_frame(
-                excesses[rn][det], det, offsets[det], prior)
-    trend = fit_affine_trend(t_by_run, run_positions)
-    frames_t = {"upper": {}, "lower": {}}
-    for rn in sorted(counts):
-        lin, hor = run_positions[rn]
+            if (convention, det) not in offsets:
+                offsets[(convention, det)] = slot_offsets(
+                    convention, det, slot_maps[k])
+
+    # Round 1: locate each segment's frame from a readback-based prior.
+    # Round 2: refit the readback -> frame-position trend across all
+    # segments of a convention, then relocate with that tighter prior.
+    located = {}
+    for k in keys:
         for det in ("upper", "lower"):
-            prior = predict_trend(trend, det, lin, hor)
-            frames_t[det][rn] = locate_frame(
-                excesses[rn][det], det, offsets[det], prior,
-                window=(2.0, 1.5), sigma=1.0)
+            prior = predict_prior(conventions[k], det,
+                                  offsets[(conventions[k], det)],
+                                  *key_positions[k])
+            located[(k, det)] = locate_frame(
+                excesses[k][det], det, offsets[(conventions[k], det)], prior)
+
+    frames = {}
+    for convention in set(conventions.values()):
+        conv_keys = [k for k in keys if conventions[k] == convention]
+        by_det = {det: {k: located[(k, det)] for k in conv_keys}
+                  for det in ("upper", "lower")}
+        trend = fit_position_trend(by_det, key_positions)
+        for k in conv_keys:
+            for det in ("upper", "lower"):
+                prior = (predict_trend(trend, det, *key_positions[k])
+                         or located[(k, det)])
+                frames[(k, det)] = locate_frame(
+                    excesses[k][det], det, offsets[(convention, det)], prior,
+                    window=(2.0, 1.5), sigma=1.0)
 
     review_rows = []
     flagged = 0
-    for run_number in sorted(counts):
-        lin, hor = run_positions[run_number]
+    for k in keys:
+        run_number, segment_index = k
         for det in ("upper", "lower"):
-            labels = {s: lab for s, (sid, lab)
-                      in slot_maps[run_number].items()}
-            tx, ty = frames_t[det][run_number]
-            preds = {s: (tx + offsets[det][s][0], ty + offsets[det][s][1])
-                     for s in labels}
-            excess = excesses[run_number][det]
+            labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
+            tx, ty = frames[(k, det)]
+            slot_offset = offsets[(conventions[k], det)]
+            preds = {slot: (tx + slot_offset[slot][0],
+                            ty + slot_offset[slot][1]) for slot in labels}
+            excess = excesses[k][det]
             for (slot, label_, pred, peak, dist, members) in (
                     assign_from_preds(excess, det, labels, preds,
                                       radius=VERIFY_RADIUS)):
@@ -146,15 +170,15 @@ def generate_review(label: str, force: bool) -> None:
                         or n_support < 2)
                 flagged += flag
                 review_rows.append({
-                    "run": run_number, "detector": det, "slot": slot,
-                    "source": label_,
+                    "run": run_number, "segment": segment_index,
+                    "detector": det, "slot": slot, "source": label_,
                     "pred_x": round(pred[0], 2),
                     "pred_y": round(pred[1], 2),
                     "peak_pixel": peak + offset if peak else "",
                     "snap_dist": round(dist, 2) if dist is not None else "",
                     "peak_excess": round(peak_excess, 1)
                                    if peak_excess else "",
-                    "peak_counts": counts[run_number][det].get(peak, "")
+                    "peak_counts": counts[k][det].get(peak, "")
                                    if peak else "",
                     "n_support": n_support,
                     "n_pixels": len(members),
@@ -167,15 +191,15 @@ def generate_review(label: str, force: bool) -> None:
         writer = csv.DictWriter(f, fieldnames=list(review_rows[0]))
         writer.writeheader()
         writer.writerows(review_rows)
-    print(f"{len(review_rows)} slot placements over {len(counts)} runs "
+    print(f"{len(review_rows)} slot placements over {len(keys)} segments "
           f"-> {REVIEW_CSV}; {flagged} flagged CHECK")
 
 
 def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
     """Apply the reviewed CSV: empty/OK rows as computed, REDO rows
     recomputed around the hand-corrected peak_pixel, CHECK rows skipped.
-    Membership is recomputed jointly per run-detector so REDO corrections
-    claim pixels consistently."""
+    Membership is recomputed jointly per segment-detector so REDO
+    corrections claim pixels consistently."""
     from collections import defaultdict
 
     counts = fetch_all_counts(label)
@@ -190,24 +214,25 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                     raise SystemExit(f"REDO row without peak_pixel: {r}")
                 skipped += 1  # nothing was found; nothing to apply
                 continue
-            groups[(int(r["run"]), r["detector"])].append(r)
+            groups[(int(r["run"]), int(r["segment"]),
+                    r["detector"])].append(r)
         elif flag == "CHECK":
             skipped += 1
         else:
             raise SystemExit(f"Unknown flag {r['flag']!r} in row: {r}")
 
     assignments = {}
-    for (run_number, det), group in groups.items():
+    for (run_number, segment_index, det), group in groups.items():
         peaks = [int(r["peak_pixel"]) for r in group]
         if len(peaks) != len(set(peaks)):
             raise SystemExit(f"Duplicate peak_pixel in run {run_number} "
-                             f"{det}: {sorted(peaks)}")
-        cmap = counts[run_number][det]
+                             f"segment {segment_index} {det}: "
+                             f"{sorted(peaks)}")
+        cmap = counts[(run_number, segment_index)][det]
         offset = 1000 if det == "lower" else 0
         centers = []
         for r in group:
-            base = int(r["peak_pixel"]) - offset
-            px, py = physical_position(base, det)
+            px, py = physical_position(int(r["peak_pixel"]), det)
             ring = {
                 p: c for p, c in cmap.items()
                 if math.hypot(physical_position(p, det)[0] - px,
@@ -215,11 +240,13 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                 <= MEMBER_RADIUS
             }
             total = sum(ring.values()) or 1
-            cx = sum(physical_position(p, det)[0] * c
-                     for p, c in ring.items()) / total
-            cy = sum(physical_position(p, det)[1] * c
-                     for p, c in ring.items()) / total
-            centers.append((r["source"], (cx, cy)))
+            centers.append((
+                r["source"],
+                (sum(physical_position(p, det)[0] * c
+                     for p, c in ring.items()) / total,
+                 sum(physical_position(p, det)[1] * c
+                     for p, c in ring.items()) / total),
+            ))
         for p in cmap:
             xx, yy = physical_position(p, det)
             best = None
@@ -228,21 +255,21 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                 if d <= MEMBER_RADIUS and (best is None or d < best[1]):
                     best = (source_label, d)
             if best:
-                assignments[(run_number, p + offset)] = best[0]
+                assignments[(run_number, segment_index,
+                             p + offset)] = best[0]
 
     with get_session() as session:
         source_ids = {s.label: s.id for s in session.scalars(select(Source))}
-        runs = {r.run_number: r for r in session.scalars(select(Run))}
         updated = 0
-        for run_number in sorted(counts):
-            run = runs[run_number]
-            rps = session.execute(
-                select(RunPixel, Pixel.pixel_number)
-                .join(Pixel, RunPixel.pixel_id == Pixel.id)
-                .where(RunPixel.run_id == run.id)
+        for (run_number, segment_index) in sorted(counts):
+            rps = session.scalars(
+                select(RunPixel).where(
+                    RunPixel.run_number == run_number,
+                    RunPixel.segment_index == segment_index)
             ).all()
-            for rp, pixel_number in rps:
-                label_ = assignments.get((run_number, pixel_number))
+            for rp in rps:
+                label_ = assignments.get(
+                    (run_number, segment_index, rp.pixel_number))
                 rp.source_id = source_ids[label_] if label_ else None
                 updated += label_ is not None
         session.commit()

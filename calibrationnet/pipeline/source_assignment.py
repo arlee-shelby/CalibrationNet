@@ -1,56 +1,82 @@
-"""Locate source count clusters on the detectors and relate them to the
-frame positions, toward automatic run_pixel -> source assignment.
+"""Work out which calibration source sat over which pixel, per run segment.
 
-Physical coordinates: upper-detector pixels use the hit-map coordinates
-from calibrationnet.geometry; lower-detector pixels are mirrored across
-the vertical center line (the detectors face each other), so one physical
-source location maps to the same (x, y) on both detectors.
+Physical coordinates come from calibrationnet.geometry: upper-detector
+pixels use the hit-map coordinates, lower-detector pixels are mirrored
+across the vertical center line (the detectors face each other), so one
+physical source location maps to the same (x, y) on both.
+
+The method, in the order the evidence is trusted:
+
+1. Geometry proposes. The source frame is rigid, so the offsets between
+   its slots are fixed and known; only the frame's position moves. The
+   readback position gives a prior for where the frame is, via that
+   segment's own position convention (calibrationnet.positions) — always
+   as a displacement from a verified anchor, never assuming any
+   convention's zero is the detector center.
+
+2. Counts decide. For each segment the whole frame is placed by the
+   single translation that best explains the excess counts under ALL its
+   slots at once. One noisy pixel cannot drag the frame, because it would
+   need four or five accomplices in rigid formation; a genuine
+   multi-column move wins easily because that much real evidence
+   outweighs the prior.
+
+3. Evidence is per-pixel relative. A pixel's counts are compared to that
+   pixel's own median across all segments, so a chronically hot low-gain
+   channel looks ordinary and a real source stands out. A lone spike with
+   no elevated neighbours is discounted: real sources light up a cluster.
 """
 
 import math
 from collections import defaultdict
+from statistics import median
 
 from sqlalchemy import func, select
 
 from ..db import get_session
-from ..geometry import mirrored_x, pixel_positions
-from ..models import Pixel, Run, RunPixel, TrapFilterOutput
+from ..geometry import physical_position
+from ..models import Pixel, RunPixel, TrapFilterOutput
+from ..positions import CONVENTIONS, predict_slot_position
 
-# Hex centers: adjacent = sqrt(3); a "cluster" is a peak plus everything
-# within two rings.
-CLUSTER_RADIUS = 2.1 * math.sqrt(3)
+# Hex centers: adjacent pixels are sqrt(3) apart.
+PIXEL_PITCH = math.sqrt(3)
+# Pixels within one ring of a source's center belong to that source.
+MEMBER_RADIUS = 1.1 * PIXEL_PITCH
+# Verification may only move a placement less than a column pitch, so it
+# can never silently swap to the neighbouring source's cluster.
+VERIFY_RADIUS = 1.0
+# One pixel can only testify so loudly, however hot it is.
+EXCESS_CAP = 30.0
+# A real source elevates its neighbourhood; a junk burst does not.
+SUPPORT_RADIUS = 2.0
+SUPPORT_EXCESS = 2.0
+LONE_SPIKE_FACTOR = 0.15
 
 
 def fetch_all_counts(label: str = "nabpy-standard") -> dict:
-    """{run_number: {detector: {pixel_number(1-127): count}}} without
-    pulling any energy arrays."""
+    """{(run_number, segment_index): {detector: {pixel(1-127): count}}}
+    without pulling any energy arrays."""
     with get_session() as session:
         rows = session.execute(
-            select(Run.run_number, Pixel.detector, Pixel.pixel_number,
+            select(RunPixel.run_number, RunPixel.segment_index,
+                   Pixel.detector, Pixel.pixel_number,
                    func.array_length(TrapFilterOutput.energies, 1))
-            .join(RunPixel, RunPixel.run_id == Run.id)
-            .join(Pixel, RunPixel.pixel_id == Pixel.id)
+            .join(Pixel, RunPixel.pixel_number == Pixel.pixel_number)
             .join(TrapFilterOutput,
                   TrapFilterOutput.run_pixel_id == RunPixel.id)
             .where(TrapFilterOutput.label == label)
         ).all()
     counts = defaultdict(lambda: defaultdict(dict))
-    for run_number, detector, pixel_number, count in rows:
-        counts[run_number][detector][pixel_number % 1000] = count or 0
-    return {r: dict(d) for r, d in counts.items()}
-
-
-def physical_position(pixel_1_127: int, detector: str) -> tuple:
-    x, y = pixel_positions()[pixel_1_127]
-    return (mirrored_x(x), y) if detector == "lower" else (x, y)
+    for run_number, segment_index, detector, pixel_number, count in rows:
+        counts[(run_number, segment_index)][detector][
+            pixel_number % 1000] = count or 0
+    return {k: dict(v) for k, v in counts.items()}
 
 
 def find_clusters(counts: dict, detector: str, n_clusters: int) -> list:
-    """Greedy peak clustering of a {pixel(1-127): count} map.
-
-    Returns up to n_clusters dicts (strongest first): peak pixel,
-    member pixels, total counts, and count-weighted centroid (x, y) in
-    physical coordinates."""
+    """Greedy peak clustering of a {pixel(1-127): count} map. Returns up to
+    n_clusters dicts (strongest first) with peak pixel, member pixels,
+    total counts, and count-weighted centroid."""
     positions = {p: physical_position(p, detector) for p in counts}
     remaining = dict(counts)
     clusters = []
@@ -62,76 +88,201 @@ def find_clusters(counts: dict, detector: str, n_clusters: int) -> list:
         members = {
             p: c for p, c in remaining.items()
             if math.hypot(positions[p][0] - px, positions[p][1] - py)
-            <= CLUSTER_RADIUS
+            <= 2.1 * PIXEL_PITCH
         }
         total = sum(members.values())
         if total == 0:
             break
-        cx = sum(positions[p][0] * c for p, c in members.items()) / total
-        cy = sum(positions[p][1] * c for p, c in members.items()) / total
         clusters.append({
             "peak": peak,
             "members": members,
             "counts": total,
-            "centroid": (cx, cy),
+            "centroid": (
+                sum(positions[p][0] * c for p, c in members.items()) / total,
+                sum(positions[p][1] * c for p, c in members.items()) / total,
+            ),
         })
         for p in members:
             remaining.pop(p)
     return clusters
 
 
-# ---------------------------------------------------------------------------
-# Frame-based assignment: the frame's position in each run is anchored to
-# that run's measured 109Cd cluster (unmistakable: ~10x hotter); the other
-# slots are placed with rigid frame vectors derived from the confirmed
-# run-8622 anchors, then snapped to the local count maximum.
+# --------------------------------------------------------------------------
+# Evidence: counts relative to each pixel's own baseline.
 
-REF_RUN = 8622
-# Confirmed by eye (AS) for run 8622: slot -> center pixel per detector.
-REF_ANCHORS = {
-    "upper": {"R2C1": 60, "R2C2": 76},
-    "lower": {"R2C1": 48, "R2C2": 52},
-}
-CD_SLOT = "R1C2"        # the Cd source's slot in the reference period
-SNAP_RADIUS = 2.6       # look for the local max within ~1.5 pixel pitches
-MEMBER_RADIUS = 1.1 * math.sqrt(3)  # pixels within one ring of the center
-
-
-def build_frames(counts: dict) -> dict:
-    """Per-detector rigid frame vectors from the reference run: column
-    step (C->C+1), row step (R2->R1), and the reference Cd centroid."""
-    frames = {}
-    for det in ("upper", "lower"):
-        cd = find_clusters(counts[REF_RUN][det], det, 1)[0]["centroid"]
-        p1 = physical_position(REF_ANCHORS[det]["R2C1"], det)
-        p2 = physical_position(REF_ANCHORS[det]["R2C2"], det)
-        frames[det] = {
-            "base": p2,                                  # R2C2 position
-            "col": (p2[0] - p1[0], p2[1] - p1[1]),
-            "row": (cd[0] - p2[0], cd[1] - p2[1]),
-            "cd_ref": cd,
-        }
-    return frames
+def compute_baselines(counts: dict) -> dict:
+    """{detector: {pixel(1-127): median count across segments}} — a pixel's
+    intrinsic rate, including noise and gain artefacts. A source only
+    visits any given pixel in a few segments, so the median is
+    essentially source-free."""
+    per_pixel = {"upper": defaultdict(list), "lower": defaultdict(list)}
+    for dets in counts.values():
+        for detector, pixels in dets.items():
+            for pixel, count in pixels.items():
+                per_pixel[detector][pixel].append(count)
+    return {det: {p: max(median(v), 1.0) for p, v in pixels.items()}
+            for det, pixels in per_pixel.items()}
 
 
-def predict_slot(frame: dict, slot: str, cd_run: tuple) -> tuple:
-    """Predicted physical (x, y) of a slot in a run whose Cd centroid is
-    cd_run. Works for any RrCc label."""
-    r, c = int(slot[1]), int(slot[3])
-    dx = cd_run[0] - frame["cd_ref"][0]
-    dy = cd_run[1] - frame["cd_ref"][1]
-    return (
-        frame["base"][0] + (c - 2) * frame["col"][0]
-        + (2 - r) * frame["row"][0] + dx,
-        frame["base"][1] + (c - 2) * frame["col"][1]
-        + (2 - r) * frame["row"][1] + dy,
+def excess_map(counts_det: dict, baseline_det: dict) -> dict:
+    """Count / that pixel's own baseline. Above ~2 means a source is
+    probably there, whatever the pixel's absolute rate."""
+    return {p: c / baseline_det.get(p, 1.0) for p, c in counts_det.items()}
+
+
+def support_at(peak_pixel: int, detector: str, excess: dict) -> int:
+    """How many pixels within one ring of peak_pixel are also elevated."""
+    px, py = physical_position(peak_pixel, detector)
+    return sum(
+        1 for p, e in excess.items()
+        if e >= SUPPORT_EXCESS
+        and math.hypot(physical_position(p, detector)[0] - px,
+                       physical_position(p, detector)[1] - py)
+        <= SUPPORT_RADIUS
     )
 
 
+def _evidence(pos, excess: dict, positions: dict) -> float:
+    """Strength of source evidence at a position: the best
+    distance-weighted excess within VERIFY_RADIUS, capped, and heavily
+    discounted when nothing around it is elevated."""
+    best = 0.0
+    support = 0
+    for p, (x, y) in positions.items():
+        d = math.hypot(x - pos[0], y - pos[1])
+        if d <= VERIFY_RADIUS:
+            best = max(best, min(excess[p], EXCESS_CAP) / (1.0 + d))
+        if d <= SUPPORT_RADIUS and excess[p] >= SUPPORT_EXCESS:
+            support += 1
+    return best if support >= 2 else best * LONE_SPIKE_FACTOR
+
+
+# --------------------------------------------------------------------------
+# The rigid frame: slot offsets, and locating it in one segment.
+
+def slot_offsets(convention: str, detector: str, slots) -> dict:
+    """{slot: (dx, dy)} of each slot relative to the frame's reference
+    slot, in hex units. These come from the physical frame, so they are
+    the same in every run and convention; the grid vectors are fitted from
+    the anchor's verified slots so that any slot label — including ones
+    the anchor did not have — can be placed."""
+    anchor = CONVENTIONS[convention]["anchor"]
+    if anchor is None:
+        raise ValueError(
+            f"Position convention {convention!r} has no verified anchor "
+            "yet, so source positions cannot be predicted. Verify one "
+            "segment's slot-to-pixel mapping and add it to "
+            "calibrationnet.positions.CONVENTIONS."
+        )
+    verified = anchor["pixels"][detector]
+
+    def center(pixels):
+        points = [physical_position(p, detector) for p in pixels]
+        return (sum(x for x, _ in points) / len(points),
+                sum(y for _, y in points) / len(points))
+
+    centers = {slot: center(pixels) for slot, pixels in verified.items()}
+    reference = centers[_reference_slot(centers)]
+
+    # Least-squares grid: center(slot) ~ origin + col*(c) + row*(r).
+    import numpy as np
+    rows_cols = [(int(s[1]), int(s[3])) for s in centers]
+    A = np.array([[1.0, c, r] for r, c in rows_cols])
+    solution = [
+        np.linalg.lstsq(A, np.array([centers[s][axis] for s in centers]),
+                        rcond=None)[0]
+        for axis in (0, 1)
+    ]
+
+    offsets = {}
+    for slot in slots:
+        r, c = int(slot[1]), int(slot[3])
+        if slot in centers:          # verified: use it exactly
+            point = centers[slot]
+        else:                        # extrapolate on the fitted grid
+            point = tuple(s[0] + s[1] * c + s[2] * r for s in solution)
+        offsets[slot] = (point[0] - reference[0], point[1] - reference[1])
+    return offsets
+
+
+def _reference_slot(centers: dict) -> str:
+    """The slot other offsets are measured from (lowest label present)."""
+    return sorted(centers)[0]
+
+
+def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
+                 window: tuple = (3.5, 2.5), step: float = 0.25,
+                 sigma: float = 2.0) -> tuple:
+    """The frame translation that best explains the excess counts under all
+    slots at once, searched on a grid around the prior.
+
+    Returns the position of the reference slot. The prior only penalises
+    distance, so enough real evidence can move the frame well away from
+    where the readback suggested."""
+    positions = {p: physical_position(p, detector) for p in excess}
+    best_t, best_score = prior, None
+    nx, ny = int(window[0] / step), int(window[1] / step)
+    for i in range(-nx, nx + 1):
+        for j in range(-ny, ny + 1):
+            t = (prior[0] + i * step, prior[1] + j * step)
+            score = -0.5 * ((i * step / sigma) ** 2 + (j * step / sigma) ** 2)
+            for dx, dy in offsets.values():
+                score += math.log1p(
+                    _evidence((t[0] + dx, t[1] + dy), excess, positions))
+            if best_score is None or score > best_score:
+                best_t, best_score = t, score
+    return best_t
+
+
+def fit_position_trend(frames_by_key: dict, key_positions: dict) -> dict:
+    """Least-squares (linear, horizontal) -> frame position, per detector,
+    over every located segment. Used as the second-round prior, and it is
+    what makes the mapping empirical: a re-homing or a units change shows
+    up as new coefficients, not as a wrong prediction."""
+    import numpy as np
+    trend = {}
+    for detector, located in frames_by_key.items():
+        keys = [k for k in located if None not in key_positions[k]]
+        if len(keys) < 3:
+            trend[detector] = None
+            continue
+        A = np.array([[key_positions[k][0], key_positions[k][1], 1.0]
+                      for k in keys])
+        trend[detector] = tuple(
+            np.linalg.lstsq(A, np.array([located[k][axis] for k in keys]),
+                            rcond=None)[0]
+            for axis in (0, 1)
+        )
+    return trend
+
+
+def predict_trend(trend: dict, detector: str, linear: float,
+                  horizontal: float):
+    coefficients = trend.get(detector)
+    if coefficients is None:
+        return None
+    cx, cy = coefficients
+    return (cx[0] * linear + cx[1] * horizontal + cx[2],
+            cy[0] * linear + cy[1] * horizontal + cy[2])
+
+
+def predict_prior(convention: str, detector: str, offsets: dict,
+                  linear: float, horizontal: float):
+    """First-round prior for the frame's reference-slot position, from the
+    convention's anchor and slopes."""
+    reference = _reference_slot(
+        CONVENTIONS[convention]["anchor"]["pixels"][detector])
+    return predict_slot_position(convention, detector, reference,
+                                 linear, horizontal)
+
+
+# --------------------------------------------------------------------------
+# Placing the sources once the frame is located.
+
 def snap_to_cluster(pred: tuple, counts: dict, detector: str,
-                    radius: float = SNAP_RADIUS):
-    """Snap a predicted position to the strongest pixel within
-    SNAP_RADIUS; returns (peak_pixel, centroid, distance) or None."""
+                    radius: float = VERIFY_RADIUS):
+    """Snap a predicted position to the strongest pixel within radius.
+    Returns (peak_pixel, centroid, distance) or None."""
     positions = {p: physical_position(p, detector) for p in counts}
     nearby = {
         p: c for p, c in counts.items()
@@ -148,322 +299,67 @@ def snap_to_cluster(pred: tuple, counts: dict, detector: str,
         <= MEMBER_RADIUS
     }
     total = sum(members.values()) or 1
-    cx = sum(positions[p][0] * c for p, c in members.items()) / total
-    cy = sum(positions[p][1] * c for p, c in members.items()) / total
-    dist = math.hypot(px - pred[0], py - pred[1])
-    return peak, (cx, cy), dist
+    return (
+        peak,
+        (sum(positions[p][0] * c for p, c in members.items()) / total,
+         sum(positions[p][1] * c for p, c in members.items()) / total),
+        math.hypot(px - pred[0], py - pred[1]),
+    )
 
 
 def snap_all(preds: dict, counts_det: dict, detector: str,
-             radius: float = SNAP_RADIUS) -> dict:
-    """Jointly snap predicted slot positions to DISTINCT clusters: greedy
-    by snap distance, and each snap claims one ring of pixels, so two
-    sources can never be placed on the same cluster (physically
-    impossible). Returns {slot: (peak, centroid, dist)}; slots that find
-    no unclaimed cluster are absent."""
+             radius: float = VERIFY_RADIUS) -> dict:
+    """Snap every slot to a DISTINCT cluster, closest-first, each snap
+    claiming one ring of pixels — so two sources can never be placed on
+    the same cluster, which is physically impossible."""
     remaining = dict(counts_det)
     pending = dict(preds)
-    out = {}
+    snapped = {}
     while pending:
         best_slot, best = None, None
         for slot, pred in pending.items():
-            snapped = snap_to_cluster(pred, remaining, detector, radius)
-            if snapped and (best is None or snapped[2] < best[2]):
-                best_slot, best = slot, snapped
+            candidate = snap_to_cluster(pred, remaining, detector, radius)
+            if candidate and (best is None or candidate[2] < best[2]):
+                best_slot, best = slot, candidate
         if best is None:
             break
-        peak = best[0]
-        out[best_slot] = best
+        snapped[best_slot] = best
         pending.pop(best_slot)
-        px, py = physical_position(peak, detector)
+        px, py = physical_position(best[0], detector)
         for p in list(remaining):
             xx, yy = physical_position(p, detector)
             if math.hypot(xx - px, yy - py) <= MEMBER_RADIUS:
                 remaining.pop(p)
-    return out
-
-
-def assign_detector(counts_det: dict, detector: str, slot_sources: dict,
-                    frame: dict, slot_offsets: dict = None) -> list:
-    """Assign sources for one run-detector map. Returns rows of
-    (slot, source_label, predicted, peak_pixel, snap_dist, members) where
-    members maps pixel(1-127) -> its distance to the source center."""
-    cd = find_clusters(counts_det, detector, 1)[0]["centroid"]
-    positions = {p: physical_position(p, detector) for p in counts_det}
-    preds = {}
-    for slot in slot_sources:
-        pred = predict_slot(frame, slot, cd)
-        if slot_offsets and slot in slot_offsets:
-            ox, oy = slot_offsets[slot]
-            pred = (pred[0] + ox, pred[1] + oy)
-        preds[slot] = pred
-    snaps = snap_all(preds, counts_det, detector)
-    centers = {}
-    results = []
-    for slot, source_label in sorted(slot_sources.items()):
-        if slot not in snaps:
-            results.append((slot, source_label, preds[slot], None, None, {}))
-            continue
-        peak, centroid, dist = snaps[slot]
-        centers[slot] = (source_label, centroid, peak, preds[slot], dist)
-    claimed = {}
-    for slot, (label, centroid, peak, pred, dist) in centers.items():
-        for p in counts_det:
-            d = math.hypot(positions[p][0] - centroid[0],
-                           positions[p][1] - centroid[1])
-            if d <= MEMBER_RADIUS and (
-                    p not in claimed or d < claimed[p][1]):
-                claimed[p] = (slot, d)
-    for slot, (label, centroid, peak, pred, dist) in centers.items():
-        members = {p: d for p, (s, d) in claimed.items() if s == slot}
-        results.append((slot, label, pred, peak, dist, members))
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Global smooth model: one linear fit per detector over ALL runs and slots,
-# slot_center(lin, 2D) = a1*lin + a2*2D + offset_slot. Because predictions
-# vary smoothly with the scan positions, a wrong-cluster jump between
-# neighboring runs (which per-run anchoring allowed) cannot happen; paired
-# with a tight snap radius the wrong source is simply out of reach.
-
-FINAL_SNAP_RADIUS = 1.4   # < half the ~5-unit source spacing
-
-
-def fit_global_model(counts: dict, run_positions: dict,
-                     slots_by_run: dict, frames: dict) -> dict:
-    """Iteratively fit the smooth model from confident snaps only.
-    run_positions: {run: (lin, hor)}; slots_by_run: {run: [slot, ...]}.
-    Returns {det: {"slopes": (ax1, ax2, ay1, ay2), "offsets": {slot: (ox, oy)}}}."""
-    import numpy as np
-
-    model = {}
-    for det in ("upper", "lower"):
-        # Round 1 seed points: per-run Cd-anchored predictions, tight cut.
-        points = []  # (lin, hor, slot, cx, cy)
-        for run, slots in slots_by_run.items():
-            cmap = counts[run][det]
-            cd = find_clusters(cmap, det, 1)[0]["centroid"]
-            preds = {s: predict_slot(frames[det], s, cd) for s in slots}
-            for s, (peak, cen, dist) in snap_all(preds, cmap, det).items():
-                if dist <= 1.0:
-                    lin, hor = run_positions[run]
-                    points.append((lin, hor, s, cen[0], cen[1]))
-
-        for round_radius, keep in ((1.2, 0.9), (None, None)):
-            slots = sorted({p[2] for p in points})
-            index = {s: i for i, s in enumerate(slots)}
-            A = np.zeros((len(points), 2 + len(slots)))
-            bx = np.zeros(len(points))
-            by = np.zeros(len(points))
-            for i, (lin, hor, s, cx, cy) in enumerate(points):
-                A[i, 0], A[i, 1] = lin, hor
-                A[i, 2 + index[s]] = 1.0
-                bx[i], by[i] = cx, cy
-            solx, *_ = np.linalg.lstsq(A, bx, rcond=None)
-            soly, *_ = np.linalg.lstsq(A, by, rcond=None)
-            model[det] = {
-                "slopes": (solx[0], solx[1], soly[0], soly[1]),
-                "offsets": {s: (solx[2 + i], soly[2 + i])
-                            for s, i in index.items()},
-            }
-            if round_radius is None:
-                break
-            # Re-snap everything from the smooth model; refit on the
-            # confident subset.
-            points = []
-            for run, slots_r in slots_by_run.items():
-                cmap = counts[run][det]
-                lin, hor = run_positions[run]
-                preds = {s: predict_global(model, det, s, lin, hor)
-                         for s in slots_r if s in model[det]["offsets"]}
-                for s, (peak, cen, dist) in snap_all(
-                        preds, cmap, det, round_radius).items():
-                    if dist <= keep:
-                        points.append((lin, hor, s, cen[0], cen[1]))
-    return model
-
-
-def predict_global(model: dict, det: str, slot: str,
-                   lin: float, hor: float) -> tuple:
-    ax1, ax2, ay1, ay2 = model[det]["slopes"]
-    ox, oy = model[det]["offsets"][slot]
-    return (ax1 * lin + ax2 * hor + ox, ay1 * lin + ay2 * hor + oy)
+    return snapped
 
 
 def assign_from_preds(counts_det: dict, detector: str, slot_sources: dict,
-                      preds: dict, radius: float = None) -> list:
-    """Like assign_detector but with externally supplied predictions and
-    a tight snap radius. counts_det may be raw counts or excess ratios.
-    Same result tuple layout."""
+                      preds: dict, radius: float = VERIFY_RADIUS) -> list:
+    """Place each slot's source and claim its pixels.
+
+    Returns rows of (slot, source_label, predicted, peak_pixel, snap_dist,
+    members), where members maps pixel(1-127) to its distance from the
+    source center. Each pixel goes to its nearest source only."""
     positions = {p: physical_position(p, detector) for p in counts_det}
-    snaps = snap_all(preds, counts_det, detector,
-                     radius if radius is not None else FINAL_SNAP_RADIUS)
-    centers = {}
-    results = []
+    snapped = snap_all(preds, counts_det, detector, radius)
+
+    centers, results = {}, []
     for slot, source_label in sorted(slot_sources.items()):
-        if slot not in snaps:
+        if slot not in snapped:
             results.append((slot, source_label, preds[slot], None, None, {}))
             continue
-        peak, centroid, dist = snaps[slot]
-        centers[slot] = (source_label, centroid, peak, preds[slot], dist)
+        peak, centroid, dist = snapped[slot]
+        centers[slot] = (source_label, centroid, peak, dist)
+
     claimed = {}
-    for slot, (label, centroid, peak, pred, dist) in centers.items():
+    for slot, (_, centroid, _, _) in centers.items():
         for p in counts_det:
             d = math.hypot(positions[p][0] - centroid[0],
                            positions[p][1] - centroid[1])
             if d <= MEMBER_RADIUS and (p not in claimed or d < claimed[p][1]):
                 claimed[p] = (slot, d)
-    for slot, (label, centroid, peak, pred, dist) in centers.items():
+
+    for slot, (source_label, _, peak, dist) in centers.items():
         members = {p: d for p, (s, d) in claimed.items() if s == slot}
-        results.append((slot, label, pred, peak, dist, members))
+        results.append((slot, source_label, preds[slot], peak, dist, members))
     return results
-
-
-# ---------------------------------------------------------------------------
-# Geometry-first prediction (counts verify, never steer):
-#   - fixed slopes from the known motion: 0.4 inch of linear position = one
-#     pixel column (1.5 units) -> 3.75 units/inch; 1 unit of 2D = one pixel
-#     vertically -> -sqrt(3) units per 2D unit (increasing 2D moves down).
-#   - anchored at the user-verified run 8622 positions.
-#   - verification against EXCESS counts (count / that pixel's median count
-#     across all runs), which neutralizes chronically hot low-gain pixels.
-
-X_PER_INCH = 1.5 / 0.4          # one column per 0.4 inch
-Y_PER_2D = -math.sqrt(3)        # one pixel row per 2D unit, + moves down
-ANCHOR_RUN = 8622
-ANCHOR_POSITIONS = (34.0, 2.7)  # (linear, 2D) of the anchor run
-# User-verified centers for run 8622 (stored pixel numbering).
-ANCHOR_PIXELS = {
-    "upper": {"R1C2": [106], "R1C3": [109], "R2C1": [60], "R2C2": [76],
-              "R2C3": [67, 80]},
-    "lower": {"R1C2": [1019], "R1C3": [1022], "R2C1": [1048],
-              "R2C2": [1052], "R2C3": [1068]},
-}
-VERIFY_RADIUS = 1.0             # < column pitch: cannot change columns
-
-
-def compute_baselines(counts: dict) -> dict:
-    """{det: {pixel(1-127): median count across runs}} — a pixel's
-    intrinsic rate (noise, gain artifacts); sources only visit each pixel
-    in a few runs, so the median is source-free."""
-    from statistics import median
-    per_pixel = {"upper": {}, "lower": {}}
-    for run, dets in counts.items():
-        for det in per_pixel:
-            for p, c in dets[det].items():
-                per_pixel[det].setdefault(p, []).append(c)
-    return {det: {p: max(median(v), 1.0) for p, v in pixels.items()}
-            for det, pixels in per_pixel.items()}
-
-
-def excess_map(counts_det: dict, baseline_det: dict) -> dict:
-    """Count / per-pixel baseline: >~2 means a source is likely there."""
-    return {p: c / baseline_det.get(p, 1.0) for p, c in counts_det.items()}
-
-
-def predict_fixed(det: str, slot: str, lin: float, hor: float) -> tuple:
-    """Anchor position + fixed-slope displacement. Lower-detector physical
-    coordinates are already mirrored, so the same slopes apply."""
-    pixels = ANCHOR_PIXELS[det][slot]
-    xs, ys = zip(*(physical_position(p % 1000, det) for p in pixels))
-    ax, ay = sum(xs) / len(xs), sum(ys) / len(ys)
-    dlin = lin - ANCHOR_POSITIONS[0]
-    dhor = hor - ANCHOR_POSITIONS[1]
-    return (ax + X_PER_INCH * dlin, ay + Y_PER_2D * dhor)
-
-
-# ---------------------------------------------------------------------------
-# Joint rigid-frame localization: per run, grid-search the single frame
-# translation T that maximizes excess-count evidence under ALL slots at
-# once (rigid frame: sources move together, so one noisy pixel cannot
-# hijack the fit), with the smooth cross-run trend as a soft prior. This
-# lets counts speak (real two-column moves win) while geometry keeps
-# individual clusters honest.
-
-
-def slot_offsets_from_anchors(det: str) -> dict:
-    """Rigid offsets of each slot relative to the Cd slot (R1C2), from
-    the user-verified run-8622 anchor pixels."""
-    def center(pixels):
-        xs, ys = zip(*(physical_position(p % 1000, det) for p in pixels))
-        return (sum(xs) / len(xs), sum(ys) / len(ys))
-    cd = center(ANCHOR_PIXELS[det]["R1C2"])
-    return {slot: tuple(a - b for a, b in zip(center(pixels), cd))
-            for slot, pixels in ANCHOR_PIXELS[det].items()}
-
-
-EXCESS_CAP = 30.0        # one pixel can only testify so loudly
-SUPPORT_RADIUS = 2.0     # one hex ring: real sources elevate neighbors
-LONE_SPIKE_FACTOR = 0.15  # discount for evidence with no neighbor support
-
-
-def _evidence(pos, excess, positions):
-    """Strength of source evidence at a position: best distance-weighted
-    excess within VERIFY_RADIUS, capped, and heavily discounted if it has
-    no support — a real source elevates a cluster of pixels, while a junk
-    burst on a dead/low-gain channel is a lone spike."""
-    best = 0.0
-    support = 0
-    for p, (x, y) in positions.items():
-        d = math.hypot(x - pos[0], y - pos[1])
-        if d <= VERIFY_RADIUS:
-            v = min(excess[p], EXCESS_CAP) / (1.0 + d)
-            if v > best:
-                best = v
-        if d <= SUPPORT_RADIUS and excess[p] >= 2.0:
-            support += 1
-    return best if support >= 2 else best * LONE_SPIKE_FACTOR
-
-
-def support_at(peak_pixel: int, det: str, excess: dict) -> int:
-    """Number of pixels within one ring of peak_pixel with excess >= 2."""
-    px, py = physical_position(peak_pixel, det)
-    return sum(
-        1 for p, e in excess.items()
-        if e >= 2.0 and math.hypot(physical_position(p, det)[0] - px,
-                                   physical_position(p, det)[1] - py)
-        <= SUPPORT_RADIUS
-    )
-
-
-def locate_frame(excess: dict, det: str, offsets: dict, prior: tuple,
-                 window: tuple = (3.5, 2.5), step: float = 0.25,
-                 sigma: float = 2.0) -> tuple:
-    """Return the frame translation T (position of the Cd slot) that
-    maximizes sum(log1p(evidence at T+offset_slot)) - prior penalty."""
-    positions = {p: physical_position(p, det) for p in excess}
-    best_t, best_score = prior, None
-    nx = int(window[0] / step)
-    ny = int(window[1] / step)
-    for i in range(-nx, nx + 1):
-        for j in range(-ny, ny + 1):
-            t = (prior[0] + i * step, prior[1] + j * step)
-            score = -0.5 * ((i * step / sigma) ** 2 + (j * step / sigma) ** 2)
-            for slot, (ox, oy) in offsets.items():
-                score += math.log1p(
-                    _evidence((t[0] + ox, t[1] + oy), excess, positions))
-            if best_score is None or score > best_score:
-                best_t, best_score = t, score
-    return best_t
-
-
-def fit_affine_trend(t_by_run: dict, run_positions: dict) -> dict:
-    """Least-squares (lin, hor) -> T trend per detector for the prior."""
-    import numpy as np
-    out = {}
-    for det, entries in t_by_run.items():
-        A = np.array([[run_positions[rn][0], run_positions[rn][1], 1.0]
-                      for rn in entries])
-        tx = np.array([entries[rn][0] for rn in entries])
-        ty = np.array([entries[rn][1] for rn in entries])
-        cx, *_ = np.linalg.lstsq(A, tx, rcond=None)
-        cy, *_ = np.linalg.lstsq(A, ty, rcond=None)
-        out[det] = (cx, cy)
-    return out
-
-
-def predict_trend(trend, det, lin, hor) -> tuple:
-    cx, cy = trend[det]
-    return (cx[0] * lin + cx[1] * hor + cx[2],
-            cy[0] * lin + cy[1] * hor + cy[2])

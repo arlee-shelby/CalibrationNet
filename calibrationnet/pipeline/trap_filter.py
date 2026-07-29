@@ -10,6 +10,11 @@ one row per waveform. Rise time and flat top are encoded in the filename
 (e.g. filter_output_rt100_ft10.csv); fall time is not, so the caller
 supplies it.
 
+A file holds one filter pass over one run SEGMENT — a period of constant
+source position. Runs taken at a single position have only segment 0;
+rastering runs have dozens, and their waveforms must be selected by the
+segment's time range before filtering.
+
 The full optimization scan (~26 rise times x ~20 flat tops per run) stays
 on disk — only curated outputs (the per-pixel optimized settings, plus
 any comparison settings) are ingested, labeled with why they're stored.
@@ -24,7 +29,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Pixel, Run, RunPixel, TrapFilterOutput
+from ..models import Pixel, RunPixel, RunSegment, TrapFilterOutput
 
 
 def parse_filter_filename(path) -> dict:
@@ -43,6 +48,9 @@ def parse_filter_filename(path) -> dict:
     run_match = re.search(r"Run(\d+)", name, re.I)
     if run_match:
         parsed["run_number"] = int(run_match.group(1))
+    segment_match = re.search(r"seg(?:ment)?[_-]?(\d+)", name, re.I)
+    if segment_match:
+        parsed["segment_index"] = int(segment_match.group(1))
     return parsed
 
 
@@ -73,21 +81,25 @@ def ingest_filter_output(
     path,
     trap_falltime: float,
     label: Optional[str] = None,
+    segment_index: int = 0,
 ) -> list:
     """Store one filter output file: one TrapFilterOutput per pixel found
-    in the file, under the given run. Creates missing run_pixels (bare —
-    board_channel/source/threshold can be filled by later ingest steps).
+    in the file, under the given run segment. Creates missing run_pixels
+    (bare — board_channel/source get filled by later ingest steps).
     Replaces any existing output with the same (run_pixel, settings), so
     re-ingesting a file is idempotent. Does not commit."""
-    run = session.execute(
-        select(Run).where(Run.run_number == run_number)
-    ).scalar_one_or_none()
-    if run is None:
-        raise ValueError(f"Run {run_number} is not in the database — "
-                         "ingest it first (scripts/ingest_run.py).")
+    segment = session.get(RunSegment, (run_number, segment_index))
+    if segment is None:
+        raise ValueError(
+            f"Run {run_number} segment {segment_index} is not in the "
+            "database — ingest the run first (scripts/ingest_run.py), which "
+            "derives its segments."
+        )
 
     settings = parse_filter_filename(path)
-    settings.pop("run_number", None)  # caller resolves the run explicitly
+    # The caller resolves which run/segment the file belongs to.
+    settings.pop("run_number", None)
+    settings.pop("segment_index", None)
     settings["trap_falltime"] = trap_falltime
     per_pixel, skipped = read_filter_output(path)
     if skipped:
@@ -113,21 +125,16 @@ def ingest_filter_output(
         raise ValueError(f"File references pixels not in the database: "
                          f"{unknown[:10]}{'...' if len(unknown) > 10 else ''}")
 
-    run_pixels = {
-        rp.pixel_id: rp
-        for rp in session.scalars(
-            select(RunPixel).where(RunPixel.run_id == run.id)
-        )
-    }
+    run_pixels = {rp.pixel_number: rp for rp in segment.run_pixels}
 
     outputs = []
     for pixel_number, pixel_energies in sorted(per_pixel.items()):
         pixel = pixels[pixel_number]
-        rp = run_pixels.get(pixel.id)
+        rp = run_pixels.get(pixel_number)
         if rp is None:
-            rp = RunPixel(run=run, pixel=pixel)
+            rp = RunPixel(segment=segment, pixel=pixel)
             session.add(rp)
-            run_pixels[pixel.id] = rp
+            run_pixels[pixel_number] = rp
         for old in [t for t in rp.trap_filter_outputs
                     if (t.trap_rise, t.trap_flattop, t.trap_falltime)
                     == (settings["trap_rise"], settings["trap_flattop"],

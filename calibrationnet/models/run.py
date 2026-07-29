@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
-    from .pixel import Pixel
     from .run_pixel import RunPixel
+    from .run_segment import RunSegment
 
 
 class Run(Base):
@@ -17,8 +17,9 @@ class Run(Base):
 
     __tablename__ = "runs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    run_number: Mapped[int] = mapped_column(unique=True, index=True)
+    # Natural primary key: users query by run number, and run numbers are
+    # never reused, so there is no surrogate id.
+    run_number: Mapped[int] = mapped_column(primary_key=True)
 
     udet_bias: Mapped[Optional[float]]
     ldet_bias: Mapped[Optional[float]]
@@ -31,8 +32,8 @@ class Run(Base):
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     number_subruns: Mapped[Optional[int]]  # lastsubrun in slow controls
 
-    linear_position: Mapped[Optional[float]]
-    horizontal_position: Mapped[Optional[float]]
+    # Source-frame position is NOT here: a long rastering run holds many
+    # positions, so positions live on run_segments (one per dwell).
     exb: Mapped[Optional[float]]
 
     udet_armor: Mapped[Optional[float]]
@@ -42,12 +43,15 @@ class Run(Base):
     udet_leakage: Mapped[Optional[float]]
     ldet_leakage: Mapped[Optional[float]]
 
-    run_pixels: Mapped[List["RunPixel"]] = relationship(
-        back_populates="run", cascade="all, delete-orphan"
+    segments: Mapped[List["RunSegment"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan",
+        order_by="RunSegment.segment_index",
     )
-    # Convenience read-only view of the pixels in this run.
-    pixels: Mapped[List["Pixel"]] = relationship(
-        secondary="run_pixels", viewonly=True
+    # Convenience read-only view of every run_pixel across the run's
+    # segments (a pixel appears once per segment).
+    run_pixels: Mapped[List["RunPixel"]] = relationship(
+        primaryjoin="Run.run_number == foreign(RunPixel.run_number)",
+        viewonly=True,
     )
 
     def __repr__(self) -> str:

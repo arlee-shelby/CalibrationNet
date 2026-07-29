@@ -56,13 +56,19 @@ def ingest_board_channels(session: Session, run_number: int, h5_path) -> int:
 
 def apply_bc_map(session: Session, run_number: int, bc_map: dict) -> int:
     """Write a cleaned {pixel_number: board_channel} map onto the run's
-    run_pixels, creating missing ones. Does not commit."""
+    run_pixels, creating missing ones. Does not commit.
+
+    The board-channel map is a property of the run, not of a source
+    position, so it is written to every segment of the run."""
     run = session.execute(
         select(Run).where(Run.run_number == run_number)
     ).scalar_one_or_none()
     if run is None:
         raise ValueError(f"Run {run_number} is not in the database — "
                          "ingest it first (scripts/ingest_run.py).")
+    if not run.segments:
+        raise ValueError(f"Run {run_number} has no segments — re-ingest it "
+                         "(scripts/ingest_run.py) to derive them.")
 
     pixels = {
         p.pixel_number: p
@@ -75,18 +81,12 @@ def apply_bc_map(session: Session, run_number: int, bc_map: dict) -> int:
         raise ValueError(f"Data file maps pixels not in the database: "
                          f"{unknown}")
 
-    run_pixels = {
-        rp.pixel_id: rp
-        for rp in session.scalars(
-            select(RunPixel).where(RunPixel.run_id == run.id)
-        )
-    }
-    for pixel_number, board_channel in bc_map.items():
-        pixel = pixels[pixel_number]
-        rp = run_pixels.get(pixel.id)
-        if rp is None:
-            rp = RunPixel(run=run, pixel=pixel)
-            session.add(rp)
-            run_pixels[pixel.id] = rp
-        rp.board_channel = board_channel
+    for segment in run.segments:
+        existing = {rp.pixel_number: rp for rp in segment.run_pixels}
+        for pixel_number, board_channel in bc_map.items():
+            rp = existing.get(pixel_number)
+            if rp is None:
+                rp = RunPixel(segment=segment, pixel=pixels[pixel_number])
+                session.add(rp)
+            rp.board_channel = board_channel
     return len(bc_map)
