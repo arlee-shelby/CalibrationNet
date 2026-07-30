@@ -39,8 +39,10 @@ def get_sc_engine():
 # from the instrument table that records it. Adapted from the Grafana
 # run-metadata dashboard's query.
 #
-# Not yet available here (TODO once we know where they live):
-#   ldet_ring, linear_position, horizontal_position
+# These instrument tables stopped being populated around 2026-07-21: newer
+# runs get these settings from the Test archive instead (see
+# motion_control.SETTINGS_CHANNELS), which also finally provides
+# ldet_ring. Positions live on run_segments, not here.
 _RUN_QUERY = text(
     """
     WITH rundata AS (
@@ -85,11 +87,13 @@ _RUN_QUERY = text(
         rundescription,
         runendtime AS end_time,
         errorcode,
-        (SELECT AVG(-values[2]/1e6) FROM keithley6487_2.data
+        -- Physical sign convention: biases and HV are negative. The raw
+        -- instrument numbers have flipped signs, corrected here.
+        (SELECT AVG(values[2]/1e6) FROM keithley6487_2.data
          WHERE time BETWEEN runstarttime AND runendtime) AS udet_bias,
-        (SELECT AVG(-values[2]/1e6) FROM keithley6487_1.data
+        (SELECT AVG(values[2]/1e6) FROM keithley6487_1.data
          WHERE time BETWEEN runstarttime AND runendtime) AS ldet_bias,
-        (SELECT AVG(values[1]/1000)::integer FROM highvoltage.data
+        (SELECT AVG(-values[1]/1000)::integer FROM highvoltage.data
          WHERE time BETWEEN runstarttime AND runendtime) AS hv,
         (SELECT AVG(values[35])::integer FROM magnet.data
          WHERE time BETWEEN runstarttime AND runendtime) AS main,

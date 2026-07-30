@@ -18,29 +18,32 @@ runs ──< run_segments ──< run_pixels >── pixels
                               │        │      — label + serial number —
                               │        │      centered over the pixel)
                               │        │
-                              │        └──> isotopes ──< isotope_peaks
+                              │        └──> isotopes ──< isotope_decay_energies
                               │                              │
-                              │                              └──< peak_energies
+                              │                              └──< kev_peaks
                               │            ("known" keV values, versioned:
                               │             NNDC values are per isotope;
                               │             simulation updates are per
                               │             physical source)
                               │
-                              └──< trap_filter_outputs   (one filter pass:
-                                          │               settings + energies
-                                          │               array, many per pixel)
-                                          └──< spectrum_fits   (fit of all peaks
-                                                    │           in one output's
-                                                    │           spectrum)
-                                                    ├──< peaks (per-peak
-                                                    │      centroid/sigma in
-                                                    │      ADC, matched to an
-                                                    │      isotope_peak)
-                                                    └──< calibrations
-                                                              │
-                                                              └──< calibration_points
-                                                          (peak + the exact
-                                                           known-energy row used)
+                              ├──< trap_filter_outputs   (one filter pass:
+                              │           │               settings + energies
+                              │           │               array, many per pixel)
+                              │           └──< spectrum_fits   (one fit of PART of
+                              │                     │           an output's spectrum,
+                              │                     │           e.g. CE window or
+                              │                     │           Auger window)
+                              │                     └──< adc_peaks (per-peak
+                              │                            centroid/sigma in
+                              │                            ADC, matched to an
+                              │                            isotope_decay_energy)
+                              │
+                              └──< calibrations   (ADC→keV fit for the run
+                                        │          pixel; its points draw on
+                                        │          SEVERAL spectrum fits)
+                                        └──< calibration_points
+                                              (adc_peak + the exact
+                                               kev_peak row used)
 ```
 
 - **runs** — one acquisition with its detector/beamline settings:
@@ -82,30 +85,47 @@ runs ──< run_segments ──< run_pixels >── pixels
   from installed_on until removed_on (NULL = still installed). A run's
   active installation is selected by its start_time. Slot labels follow
   the convention below.
-- **isotope_peaks** — the peaks an isotope produces; the count varies by
-  isotope.
-- **peak_energies** — versioned "known" keV values for an isotope peak:
-  origin ("nndc" or "simulation"), version label, error, created_at.
-  source_id is NULL for generic literature values and set for
-  simulation-updated values, which are specific to one physical source.
-  Updated values are new rows, never overwrites.
+- **isotope_decay_energies** — the energy lines an isotope's decay
+  produces (e.g. 207Bi "CE-K 976"); the count varies by isotope. This is
+  the line's *identity* only — the keV values believed for it live in
+  kev_peaks.
+- **kev_peaks** — versioned "known" keV values for a decay line — the keV
+  side of a calibration point: origin ("nndc" or "simulation"), version
+  label, error, created_at. source_id is NULL for generic literature
+  values and set for simulation-updated values, which are specific to one
+  physical source. Updated values are new rows, never overwrites.
 - **trap_filter_outputs** — one application of the trapezoidal filter to a
   run_pixel's raw waveforms: trap_rise, trap_flattop, trap_falltime, and
   the resulting per-waveform energies (ADC) as an array. Applied many
   times with different settings; histograms are built from `energies` on
   demand.
-- **spectrum_fits** — a fit of all peaks in one filter output's spectrum:
-  chi2, ndf, full parameter/error sets as JSONB (parameter count varies
-  with the source's peak count).
-- **peaks** — per-peak results broken out of a spectrum fit, in ADC:
-  centroid ± error, sigma ± error, amplitude ± error, matched isotope_peak.
-- **calibrations** — ADC→keV calibration (linear/quadratic) from one
-  spectrum fit: coefficients ± errors, chi2, is_current, created_at.
-  Multiple attempts are kept; a partial unique index guarantees at most one
-  `is_current` per (run_pixel, type).
-- **calibration_points** — which (measured peak, known-energy row) pairs
-  fed a calibration, so it's always known whether NNDC or simulation
-  values were used.
+- **spectrum_fits** — one fit of *part* of a filter output's spectrum; an
+  output usually takes several (the six CE peaks over one ADC window, the
+  Auger peaks over another), distinguished by `label` and
+  fit_range_low/high. Stores chi2/ndf/reduced_chi2/success, all parameter
+  values and errors as JSONB, the varied-parameter names (`var_names`, in
+  covariance row order) with the covariance matrix, and the fit inputs
+  (`config`) so any fit can be reproduced. Correlations are not stored —
+  they're derived exactly from the covariance by `.correlations()`.
+- **adc_peaks** — per-peak results broken out of a spectrum fit, in ADC —
+  the ADC side of a calibration point: centroid ± error, sigma ± error,
+  amplitude ± error, matched isotope_decay_energy.
+- **calibrations** — ADC→keV calibration (linear/quadratic) for one
+  run_pixel. Deliberately not tied to one spectrum fit — its points come
+  from several fits (CE + Auger windows), recorded per point via
+  calibration_points. Coefficients ± errors as dedicated columns, plus
+  the same fit-quality/uncertainty pattern as spectrum_fits: `label`,
+  chi2/ndf/reduced_chi2/success, `var_names` + `covariance`, `config`,
+  and derived `.correlations()`. Multiple attempts are kept; a partial
+  unique index guarantees at most one `is_current` per (run_pixel, type).
+- **calibration_points** — which (adc_peak, kev_peak) pairs fed a
+  calibration, so it's always known whether NNDC or simulation values
+  were used.
+
+How fit results are stored — what `pars`, `var_names`, `covariance`,
+`config`, and `success` each hold, why correlations are derived rather
+than stored, and worked examples for both tables — is documented in
+[docs/fit_storage.md](docs/fit_storage.md).
 
 ### Source position conventions
 

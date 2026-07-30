@@ -31,6 +31,38 @@ load_dotenv()
 LINEAR_CHANNEL = "BL13:Nab:RSIS:leftRightMPOS:MPOS"
 HORIZONTAL_CHANNEL = "BL13:Nab:RSIS:downUpstreamMPOS:MPOS"
 
+# Run-level settings that moved to this archive after 2026-07-21 (they no
+# longer appear in the Nab_SlowControl instrument tables). Values are
+# stored in the PHYSICAL sign convention: detector biases and HV are
+# negative (e.g. -300 V, -27 kV). The old +300/+27 recording was a sign
+# mistake and was corrected across the runs table on 2026-07-30. Archive
+# voltages are in volts (AS); hv is stored in kV, temperatures in Kelvin.
+#
+# Entries: column -> (channel, expected archive unit, transform, aggregate).
+# The archive self-describes its units (channels field 'display.units');
+# fetch_settings VERIFIES each channel still reports the expected unit and
+# warns loudly if not, so an upstream unit change cannot silently corrupt
+# the runs table. Transforms convert archive units to the runs-table
+# conventions: biases/exb in V, hv in kV, temperatures in K, leakage in
+# MICROAMPS (the unit the legacy columns were recorded in, per AS —
+# LDET ran ~36 uA before 2026-07-21 and ~0.06 uA after). Settings are
+# averaged over the run window except leakage, which keeps the legacy MAX
+# (worst case during the run).
+SETTINGS_CHANNELS = {
+    "exb": ("BL13:Nab:ExBelectrode:voltage", "V", lambda v: v, "avg"),
+    "ldet_bias": ("BL13:Nab:LDETBias:SourceVoltage", "V", lambda v: v, "avg"),
+    "ldet_armor": ("BL13:Nab:LDETTemperatures:Armor", "K", lambda v: v, "avg"),
+    "ldet_ring": ("BL13:Nab:LDETTemperatures:Ring1", "K", lambda v: v, "avg"),
+    "ldet_leakage": ("BL13:Nab:LDETBias:Data", "A",
+                     lambda v: v * 1e6, "max"),
+    "udet_bias": ("BL13:Nab:UDETBias:SourceVoltage", "V", lambda v: v, "avg"),
+    "hv": ("BL13:Nab:UDETHV:voltage", "V", lambda v: v / 1000.0, "avg"),
+    "udet_armor": ("BL13:Nab:UDETTemperatures:Armor", "K", lambda v: v, "avg"),
+    "udet_ring": ("BL13:Nab:UDETTemperatures:Ring1", "K", lambda v: v, "avg"),
+    "udet_leakage": ("BL13:Nab:UDETBias:Data", "A",
+                     lambda v: v * 1e6, "max"),
+}
+
 # A readback wanders by a few thousandths of an inch while parked, and the
 # scan steps are ~0.2 inch, so 0.02 inch safely separates "same position"
 # from "moved" without splitting a dwell on jitter.
@@ -180,6 +212,58 @@ def dwell_periods(start_time, end_time,
             "horizontal_position": sum(e[2] for e in group) / len(group),
         })
     return periods
+
+
+_SETTING_QUERIES = {
+    aggregate: text(f"""
+        SELECT {aggregate.upper()}(COALESCE(s.float_value, s.integer_value))
+        FROM samples s
+        JOIN channels c ON s.channel_id = c.id
+        WHERE c.channel = :channel
+          AND c.field = 'value'
+          AND s.time BETWEEN :t0 AND :t1
+    """)
+    for aggregate in ("avg", "max")
+}
+
+_UNITS_QUERY = text(
+    """
+    SELECT s.str_value
+    FROM samples s
+    JOIN channels c ON s.channel_id = c.id
+    WHERE c.channel = :channel
+      AND c.field = 'display.units'
+    ORDER BY s.time DESC
+    LIMIT 1
+    """
+)
+
+
+def fetch_settings(start_time, end_time) -> dict:
+    """Run-level settings over a time window, from the archive.
+
+    Returns {runs-column: value} for every SETTINGS_CHANNELS entry that has
+    samples in the window, aggregated per its entry (avg for settings, max
+    for leakage) and transformed to the runs-table conventions. Channels
+    with no samples are simply absent. Each channel's self-described unit
+    is checked against the expected one; a mismatch skips the value and
+    warns, rather than storing a silently misconverted number."""
+    settings = {}
+    with get_positions_engine().connect() as conn:
+        for column, (channel, expected_unit, transform, aggregate) in (
+                SETTINGS_CHANNELS.items()):
+            unit = conn.execute(_UNITS_QUERY, {"channel": channel}).scalar()
+            if unit is not None and unit != expected_unit:
+                print(f"WARNING: {channel} reports display.units={unit!r} "
+                      f"but {expected_unit!r} was expected — {column} left "
+                      "unset; update SETTINGS_CHANNELS for the new unit.")
+                continue
+            value = conn.execute(_SETTING_QUERIES[aggregate], {
+                "channel": channel, "t0": start_time, "t1": end_time,
+            }).scalar()
+            if value is not None:
+                settings[column] = transform(float(value))
+    return settings
 
 
 def position_at(when) -> Optional[dict]:

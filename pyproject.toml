@@ -8,6 +8,13 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "alembic>=1.13",
     "python-dotenv>=1.0",
+    # Analysis layer: hit maps (matplotlib), spectrum fitting (lmfit/scipy).
+    # Unpinned on purpose so installing into an existing nabPy environment
+    # never fights its numpy/numba pins.
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "lmfit",
 ]
 
 [build-system]

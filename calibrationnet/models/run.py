@@ -21,6 +21,11 @@ class Run(Base):
     # never reused, so there is no surrogate id.
     run_number: Mapped[int] = mapped_column(primary_key=True)
 
+    # Units and sign conventions (physical signs as of 2026-07-30):
+    # biases in volts (negative, e.g. -300); hv in kilovolts (negative,
+    # e.g. -27); main/udet magnet currents in amps; exb in volts;
+    # temperatures in kelvin; leakage currents in MICROAMPS (both
+    # detectors, both epochs).
     udet_bias: Mapped[Optional[float]]
     ldet_bias: Mapped[Optional[float]]
     hv: Mapped[Optional[float]]

@@ -7,23 +7,24 @@ from .base import Base
 
 if TYPE_CHECKING:
     from .calibration import CalibrationPoint
-    from .source import IsotopePeak
+    from .source import IsotopeDecayEnergy
     from .spectrum_fit import SpectrumFit
 
 
-class Peak(Base):
-    """One fitted peak extracted from a SpectrumFit, in ADC units, matched
-    to the isotope peak it corresponds to. Its centroid +- error, paired
-    with a known energy (PeakEnergy), is what feeds a calibration."""
+class ADCPeak(Base):
+    """One fitted peak extracted from a SpectrumFit, in ADC units — the
+    ADC side of a calibration point. Its centroid +- error, paired with a
+    known keV value (KeVPeak) for the decay line it is matched to, is what
+    feeds a calibration."""
 
-    __tablename__ = "peaks"
+    __tablename__ = "adc_peaks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     spectrum_fit_id: Mapped[int] = mapped_column(
         ForeignKey("spectrum_fits.id"), index=True
     )
-    isotope_peak_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("isotope_peaks.id"), index=True
+    isotope_decay_energy_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("isotope_decay_energies.id"), index=True
     )
 
     centroid_adc: Mapped[float]
@@ -34,14 +35,14 @@ class Peak(Base):
     amplitude_error: Mapped[Optional[float]]
 
     spectrum_fit: Mapped["SpectrumFit"] = relationship(
-        back_populates="peaks"
+        back_populates="adc_peaks"
     )
-    isotope_peak: Mapped[Optional["IsotopePeak"]] = relationship(
-        back_populates="measured_peaks"
+    isotope_decay_energy: Mapped[Optional["IsotopeDecayEnergy"]] = (
+        relationship(back_populates="adc_peaks")
     )
     calibration_points: Mapped[List["CalibrationPoint"]] = relationship(
-        back_populates="peak"
+        back_populates="adc_peak"
     )
 
     def __repr__(self) -> str:
-        return f"Peak(centroid_adc={self.centroid_adc})"
+        return f"ADCPeak(centroid_adc={self.centroid_adc})"

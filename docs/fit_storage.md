@@ -1,0 +1,160 @@
+# How fit results are stored
+
+Two tables hold fit results — **spectrum_fits** (peak fits of a trap
+filter output's spectrum) and **calibrations** (ADC→keV fits) — and both
+follow the same storage pattern. This page explains the pattern once,
+with a worked example using real numbers from run 8622, pixel 60.
+
+## The pattern
+
+| kind | where | examples |
+|---|---|---|
+| Things you'll query/filter on | dedicated columns | `label`, `fit_range_low/high`, `chi2`, `ndf`, `reduced_chi2`, `success`, coefficients |
+| Variable-size fit results | JSONB columns | `pars`, `par_errors`, `var_names`, `covariance` |
+| Inputs *without* a dedicated column | `config` (JSONB) | peak-finder parameters, initial width guesses, weighting choices |
+| Correlations | **not stored** | derived on demand by `.correlations()` |
+
+**Convention:** anything that has a dedicated column (the fit bounds
+`fit_range_low`/`fit_range_high`, `n_peaks`, the calibration
+coefficients) is stored **there and only there** — it is *not* repeated
+inside `config`. `config` holds only the remaining inputs.
+
+## Worked example: storing a spectrum fit
+
+The usual 6-peak conversion-electron fit:
+
+```python
+import calibrationnet.fit_functions as f
+from calibrationnet.models import SpectrumFit
+
+peak_finder_parameters = (5, None, 20, 15, 1, None, 0.5, None)
+initial_peak_width_guess = {'sig1': 3, 'sig2': 3, 'sig3': 3,
+                            'sig4': 5, 'sig5': 5, 'sig6': 5}
+
+results = f.get_fit(data, 1200, 3300, peak_finder_parameters, 6,
+                    initial_peak_width_guess, plot=False)
+
+fit = SpectrumFit.from_lmfit(
+    results,
+    trap_filter_output=tfo,
+    label="ce-6peak",
+    fit_range=(1200, 3300),          # -> fit_range_low / fit_range_high columns
+    config={                          # only the inputs WITHOUT a column:
+        "peak_finder_parameters": list(peak_finder_parameters),
+        "initial_peak_width_guess": initial_peak_width_guess,
+    },
+)
+session.add(fit)
+```
+
+`from_lmfit` copies everything else straight off the lmfit
+`MinimizerResult`. For this fit the row holds:
+
+- **`label`** = `"ce-6peak"` — which of the output's fits this is. One
+  trap filter output takes several fits (the six CE peaks over one ADC
+  window, the Auger peaks over another), each its own row.
+- **`fit_range_low` / `fit_range_high`** = `1200` / `3300` — the fitted
+  ADC window, as ordinary queryable columns.
+- **`n_peaks`** = `6`.
+- **`chi2` / `ndf` / `reduced_chi2`** = `results.chisqr` /
+  `results.nfree` / `results.redchi`.
+- **`success`** = `results.success` — lmfit's True/False convergence
+  flag. False means the minimizer gave up and the values/errors in the
+  row can't be trusted. Stored so bad fits can be filtered with a query:
+  `WHERE success`.
+- **`pars` / `par_errors`** — `{name: value}` / `{name: stderr}` for
+  **all 34** parameters, including fixed ones (`num_peaks` is in `pars`
+  with value 6.0 and no error).
+- **`var_names`** — the **33 varied** parameters, in lmfit's order:
+  `['slope', 'intercept', 'beta', 'amp1', 'cen1', 'sig1', ...]`.
+  `num_peaks` is *not* in it, because it was fixed. This list exists for
+  two reasons `pars` can't cover: it records which parameters were
+  actually varied, and — the important one — it is the **row/column
+  labels of the covariance matrix**, which is a bare grid of numbers
+  with no labels of its own. `var_names[29] == 'cen6'` is the only thing
+  that tells you what row 29 of the covariance means.
+- **`covariance`** — `results.covar` as a 33×33 nested list, ordered
+  exactly by `var_names`.
+- **`config`** — the two inputs above that have no dedicated column, so
+  the fit can be reproduced exactly.
+
+### Why `config` matters
+
+This fit is sensitive to its inputs. With `upper_bound = 3200` the cen6
+centroid error came out **±25556**; with `3300` it is **±0.49**. Same
+data, same label — the *only* difference between those two rows is the
+input. Without recording the inputs you could neither reproduce a stored
+fit nor explain why two attempts disagree.
+
+### Correlations: derived, never stored
+
+There is **no correlations column**. A correlation is pure arithmetic on
+the covariance:
+
+```
+corr(a, b) = cov(a, b) / sqrt(cov(a, a) * cov(b, b))
+```
+
+which is exactly how lmfit computes `.correl`. Storing correlations next
+to the covariance would be the same information twice, with the risk of
+the two copies disagreeing. Instead both models inherit
+`correlations()` from `CovarianceMixin`
+(`calibrationnet/models/covariance.py`):
+
+```python
+fit.correlations("cen6")          # {'sig6': -0.7432746973, 'amp6': ..., ...}
+fit.correlations("cen6")["sig6"]  # -0.7432746973
+fit.correlations()                # the full matrix as {name: {other: corr}}
+```
+
+Checked against lmfit on this exact fit:
+`results.params['cen6'].correl['sig6']` = **−0.7432746973** and the
+derived value from the stored covariance = **−0.7432746973** — identical
+to every digit.
+
+## Reading a fit back
+
+```python
+from sqlalchemy import select
+from calibrationnet.models import SpectrumFit
+
+fit = session.execute(
+    select(SpectrumFit).where(SpectrumFit.label == "ce-6peak", ...)
+).scalars().first()
+
+fit.pars["cen6"], fit.par_errors["cen6"]   # value and stderr
+fit.correlations("cen6")                   # same as lmfit's .correl
+
+import numpy as np
+cov = np.array(fit.covariance)             # rows/cols labeled by fit.var_names
+i = fit.var_names.index("cen6")
+cen6_variance = cov[i, i]
+```
+
+## Calibrations: the same pattern, smaller
+
+A calibration is a 2-parameter (linear) or 3-parameter (quadratic) fit,
+so the coefficients are small and fixed in number and get **dedicated
+columns**: `constant_term ± constant_error`, `linear_term ±
+linear_error`, `quadratic_term ± quadratic_error`. Everything else
+mirrors spectrum_fits:
+
+- `label` — which calibration attempt (e.g. `"nndc-2026"`,
+  `"sim-corrected"`).
+- `chi2`, `ndf`, `reduced_chi2`, `success` — same meanings.
+- `var_names` — `['constant', 'linear']` or
+  `['constant', 'linear', 'quadratic']`, labeling the 2×2 or 3×3
+  `covariance`.
+- `config` — inputs without a column (e.g. weighting choices).
+- `correlations()` — same derived method; a linear calibration has one
+  correlation, a quadratic has three.
+
+```python
+cal.correlations("constant")["linear"]   # e.g. 0.3794733192
+```
+
+A calibration deliberately has **no `spectrum_fit_id`**: its points come
+from *several* fits of the same output (CE window + Auger window). Which
+fits contributed is recorded per point, through
+`calibration_points → adc_peak → spectrum_fit`; the assumed keV values
+through `calibration_points → kev_peak`.

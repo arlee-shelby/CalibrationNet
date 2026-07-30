@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Run, RunSegment
 from ..positions import INCHES_2026, convention_for_date
-from .motion_control import dwell_periods
+from .motion_control import dwell_periods, fetch_settings
 from .slow_controls import fetch_run
 
 # Everything fetch_run returns whose key matches a Run column gets stored;
@@ -37,6 +37,16 @@ def ingest_run(session: Session, run_number: int) -> Run:
     for key, value in data.items():
         if key in _RUN_COLUMNS:
             setattr(run, key, value)
+
+    # Several settings moved to the Test archive after 2026-07-21 and no
+    # longer appear in the slow-controls instrument tables, so for new-
+    # epoch runs fill in whatever fetch_run left empty. Fill-if-missing
+    # only: a value the legacy tables DID provide is never overwritten.
+    if convention_for_date(run.start_time.date()) == INCHES_2026:
+        for key, value in fetch_settings(run.start_time,
+                                         run.end_time).items():
+            if getattr(run, key) is None:
+                setattr(run, key, value)
 
     session.flush()  # the run must exist before its segments reference it
     sync_segments(session, run, data)

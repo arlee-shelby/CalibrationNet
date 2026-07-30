@@ -2,27 +2,38 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .covariance import CovarianceMixin
 
 if TYPE_CHECKING:
-    from .peak import Peak
+    from .adc_peak import ADCPeak
     from .run_pixel import RunPixel
-    from .source import PeakEnergy
-    from .spectrum_fit import SpectrumFit
+    from .source import KeVPeak
 
 
-class Calibration(Base):
-    """An ADC -> keV calibration (linear or quadratic) fit from one
-    SpectrumFit's peak centroids against known energies. Multiple attempts
-    are kept — different trap settings, and recalibrations when the known
-    energies are updated from simulation. run_pixel_id duplicates what the
-    spectrum_fit chain already implies, so that "the current calibration
-    for this run pixel" is a single indexed query and so a partial unique
-    index can enforce at most one is_current per (run_pixel, type).
-    Exactly which (measured peak, known energy) pairs went in is recorded
-    by CalibrationPoint."""
+class Calibration(CovarianceMixin, Base):
+    """An ADC -> keV calibration (linear or quadratic) for one run_pixel,
+    fit from measured ADC centroids against known keV values.
+
+    A calibration deliberately does NOT link to one spectrum_fit: its
+    points come from SEVERAL fits of the same trap filter output (the CE
+    window and the Auger window), so which fits contributed is recorded
+    per point, through calibration_points -> adc_peak -> spectrum_fit.
+
+    Multiple attempts are kept — different trap settings, and
+    recalibrations when the known energies are updated from simulation —
+    distinguished by `label`; a partial unique index enforces at most one
+    is_current per (run_pixel, calibration_type).
+
+    Uncertainty bookkeeping follows the same pattern as spectrum_fits:
+    the coefficients get dedicated columns (small, fixed set, directly
+    queryable), `var_names` + `covariance` carry the full uncertainty
+    structure, and correlations are derived on demand by correlations()
+    (from CovarianceMixin), never stored. See docs/fit_storage.md.
+    """
 
     __tablename__ = "calibrations"
     __table_args__ = (
@@ -36,28 +47,40 @@ class Calibration(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    spectrum_fit_id: Mapped[int] = mapped_column(
-        ForeignKey("spectrum_fits.id"), index=True
-    )
     run_pixel_id: Mapped[int] = mapped_column(
         ForeignKey("run_pixels.id"), index=True
     )
 
+    # Which calibration attempt this is, e.g. "nndc-2026", "sim-corrected".
+    label: Mapped[Optional[str]] = mapped_column(String(50))
     calibration_type: Mapped[str] = mapped_column(String(20))  # "linear" | "quadratic"
+
+    # The fitted coefficients: keV = constant + linear*ADC (+ quadratic*ADC^2).
     constant_term: Mapped[Optional[float]]
     constant_error: Mapped[Optional[float]]
     linear_term: Mapped[Optional[float]]
     linear_error: Mapped[Optional[float]]
     quadratic_term: Mapped[Optional[float]]
     quadratic_error: Mapped[Optional[float]]
+
+    # Goodness of fit, straight from the minimizer.
     chi2: Mapped[Optional[float]]
+    ndf: Mapped[Optional[int]]
+    reduced_chi2: Mapped[Optional[float]]
+    success: Mapped[Optional[bool]]
+
+    # Varied-parameter names, in the order of covariance's rows/columns
+    # (['constant', 'linear'] for linear, + 'quadratic' for quadratic).
+    var_names: Mapped[Optional[list]] = mapped_column(JSONB)
+    covariance: Mapped[Optional[list]] = mapped_column(JSONB)
+
+    # Fit inputs that don't have a dedicated column (weighting choices,
+    # minimizer settings, ...) so any calibration can be reproduced.
+    config: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     is_current: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    spectrum_fit: Mapped["SpectrumFit"] = relationship(
-        back_populates="calibrations"
-    )
     run_pixel: Mapped["RunPixel"] = relationship(
         back_populates="calibrations"
     )
@@ -67,40 +90,45 @@ class Calibration(Base):
 
     def __repr__(self) -> str:
         return (
-            f"Calibration(id={self.id}, type={self.calibration_type}, "
-            f"current={self.is_current})"
+            f"Calibration(id={self.id}, label={self.label}, "
+            f"type={self.calibration_type}, current={self.is_current})"
         )
 
 
 class CalibrationPoint(Base):
-    """One (measured centroid, assumed known energy) pair that fed a
-    calibration. Linking to PeakEnergy — not just the isotope peak —
-    records which version of the known values (NNDC vs. a simulation
-    update for that specific physical source) was used, so every
+    """One (x, y) point of a calibration fit: the measured ADC centroid
+    (adc_peak) paired with the assumed keV value (kev_peak) for the same
+    decay line. Linking to a specific KeVPeak row — not just the decay
+    line — records which version of the known values (NNDC vs. a
+    simulation correction for that physical source) was used, so every
     calibration stays reproducible."""
 
     __tablename__ = "calibration_points"
-    __table_args__ = (UniqueConstraint("calibration_id", "peak_id"),)
+    __table_args__ = (UniqueConstraint("calibration_id", "adc_peak_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     calibration_id: Mapped[int] = mapped_column(
         ForeignKey("calibrations.id"), index=True
     )
-    peak_id: Mapped[int] = mapped_column(ForeignKey("peaks.id"), index=True)
-    peak_energy_id: Mapped[int] = mapped_column(
-        ForeignKey("peak_energies.id"), index=True
+    adc_peak_id: Mapped[int] = mapped_column(
+        ForeignKey("adc_peaks.id"), index=True
+    )
+    kev_peak_id: Mapped[int] = mapped_column(
+        ForeignKey("kev_peaks.id"), index=True
     )
 
     calibration: Mapped["Calibration"] = relationship(
         back_populates="points"
     )
-    peak: Mapped["Peak"] = relationship(back_populates="calibration_points")
-    peak_energy: Mapped["PeakEnergy"] = relationship(
+    adc_peak: Mapped["ADCPeak"] = relationship(
+        back_populates="calibration_points"
+    )
+    kev_peak: Mapped["KeVPeak"] = relationship(
         back_populates="calibration_points"
     )
 
     def __repr__(self) -> str:
         return (
             f"CalibrationPoint(calibration_id={self.calibration_id}, "
-            f"peak_id={self.peak_id})"
+            f"adc_peak_id={self.adc_peak_id})"
         )

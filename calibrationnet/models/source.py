@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
+    from .adc_peak import ADCPeak
     from .calibration import CalibrationPoint
-    from .peak import Peak
     from .run_pixel import RunPixel
 
 
@@ -22,7 +22,7 @@ class Isotope(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(20), unique=True)  # e.g. "207Bi"
 
-    peaks: Mapped[List["IsotopePeak"]] = relationship(
+    decay_energies: Mapped[List["IsotopeDecayEnergy"]] = relationship(
         back_populates="isotope", cascade="all, delete-orphan"
     )
     sources: Mapped[List["Source"]] = relationship(back_populates="isotope")
@@ -52,7 +52,7 @@ class Source(Base):
     run_pixels: Mapped[List["RunPixel"]] = relationship(
         back_populates="source"
     )
-    peak_energies: Mapped[List["PeakEnergy"]] = relationship(
+    kev_peaks: Mapped[List["KeVPeak"]] = relationship(
         back_populates="source"
     )
     installations: Mapped[List["SourceInstallation"]] = relationship(
@@ -102,12 +102,13 @@ class SourceInstallation(Base):
         )
 
 
-class IsotopePeak(Base):
-    """One peak an isotope produces (e.g. 207Bi CE-K 976). The number of
-    peaks varies by isotope. Its "known" energy in keV lives in PeakEnergy,
-    which is versioned and may be specific to a physical source."""
+class IsotopeDecayEnergy(Base):
+    """One energy line an isotope's decay produces (e.g. 207Bi CE-K 976).
+    How many lines varies by isotope. This is the line's IDENTITY only —
+    the keV values we believe for it live in KeVPeak, which is versioned
+    and may be specific to a physical source."""
 
-    __tablename__ = "isotope_peaks"
+    __tablename__ = "isotope_decay_energies"
     __table_args__ = (UniqueConstraint("isotope_id", "label"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -116,31 +117,35 @@ class IsotopePeak(Base):
     )
     label: Mapped[str] = mapped_column(String(50))  # e.g. "CE-K 976"
 
-    isotope: Mapped["Isotope"] = relationship(back_populates="peaks")
-    energies: Mapped[List["PeakEnergy"]] = relationship(
-        back_populates="isotope_peak", cascade="all, delete-orphan"
+    isotope: Mapped["Isotope"] = relationship(
+        back_populates="decay_energies"
     )
-    measured_peaks: Mapped[List["Peak"]] = relationship(
-        back_populates="isotope_peak"
+    kev_peaks: Mapped[List["KeVPeak"]] = relationship(
+        back_populates="isotope_decay_energy", cascade="all, delete-orphan"
+    )
+    adc_peaks: Mapped[List["ADCPeak"]] = relationship(
+        back_populates="isotope_decay_energy"
     )
 
     def __repr__(self) -> str:
-        return f"IsotopePeak(isotope_id={self.isotope_id}, label={self.label})"
+        return (f"IsotopeDecayEnergy(isotope_id={self.isotope_id}, "
+                f"label={self.label})")
 
 
-class PeakEnergy(Base):
-    """A "known" energy (keV) for an isotope peak. NNDC/literature values
-    apply to the isotope in general (source_id NULL); simulation-updated
-    values are specific to one physical source (source_id set). Old rows
-    are never overwritten — new values are new rows — and each calibration
-    records (via CalibrationPoint) exactly which energy rows it used, so
-    any past calibration stays reproducible."""
+class KeVPeak(Base):
+    """A "known" energy value, in keV, for one isotope decay line — the
+    keV side of a calibration point. NNDC/literature values apply to the
+    isotope in general (source_id NULL); corrected values from simulation
+    are specific to one physical source (source_id set). Old rows are
+    never overwritten — new values are new rows — and each calibration
+    records (via CalibrationPoint) exactly which keV rows it used, so any
+    past calibration stays reproducible."""
 
-    __tablename__ = "peak_energies"
+    __tablename__ = "kev_peaks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    isotope_peak_id: Mapped[int] = mapped_column(
-        ForeignKey("isotope_peaks.id"), index=True
+    isotope_decay_energy_id: Mapped[int] = mapped_column(
+        ForeignKey("isotope_decay_energies.id"), index=True
     )
     # NULL = generic literature value; set = specific to that physical source.
     source_id: Mapped[Optional[int]] = mapped_column(
@@ -154,18 +159,18 @@ class PeakEnergy(Base):
     notes: Mapped[Optional[str]]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    isotope_peak: Mapped["IsotopePeak"] = relationship(
-        back_populates="energies"
+    isotope_decay_energy: Mapped["IsotopeDecayEnergy"] = relationship(
+        back_populates="kev_peaks"
     )
     source: Mapped[Optional["Source"]] = relationship(
-        back_populates="peak_energies"
+        back_populates="kev_peaks"
     )
     calibration_points: Mapped[List["CalibrationPoint"]] = relationship(
-        back_populates="peak_energy"
+        back_populates="kev_peak"
     )
 
     def __repr__(self) -> str:
         return (
-            f"PeakEnergy(isotope_peak_id={self.isotope_peak_id}, "
-            f"{self.energy_kev} keV, origin={self.origin})"
+            f"KeVPeak(isotope_decay_energy_id={self.isotope_decay_energy_id},"
+            f" {self.energy_kev} keV, origin={self.origin})"
         )
