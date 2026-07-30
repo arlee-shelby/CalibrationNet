@@ -69,18 +69,36 @@ CONVENTIONS = {
     INCHES_2026: {
         "linear_units": "inch",
         "horizontal_units": "inch",
-        "hex_per_linear": HEX_PER_INCH,
-        # Both axes are physical inches now and the pixel grid is
-        # isotropic, so the same scale applies. The SIGN is unverified:
-        # whether increasing "downUpstream" moves the sources toward
-        # pixel 70 or away from it has not been checked against data.
-        # bootstrap_anchor (see pipeline.source_assignment) determines
-        # both this sign and the anchor empirically from hit counts.
-        "hex_per_horizontal": -HEX_PER_INCH,
-        # No verified anchor yet: needs one segment whose slot->pixel
-        # mapping has been confirmed. Until then assignment refuses to
-        # guess rather than silently misplacing sources.
-        "anchor": None,
+        # Both measured from data rather than assumed. Linear: fitted over
+        # run 9370's 2.73 inch span (rms 0.94 hex), which gives ~0.45 inch
+        # per pixel column rather than the 0.4 inch previously assumed.
+        # Horizontal: from runs 9326/9327, which sit at the SAME linear
+        # position 0.25 inch apart, so they isolate this axis with no
+        # linear confound — the frame moved 0.98 hex in -y, confirming the
+        # sign did not flip when the stage was re-homed.
+        #
+        # Kept as one scale per axis on purpose: the stage moves linear and
+        # horizontal independently, so any diagonal component in the hit
+        # pattern is magnetic-field distortion, not motion, and does not
+        # belong in this mapping.
+        "hex_per_linear": 3.35,
+        "hex_per_horizontal": -3.90,
+        "anchor": {
+            "run_number": 9326,
+            "segment_index": 0,
+            "linear_position": 33.502,
+            "horizontal_position": -0.249,
+            # Identified by eye (AS, 2026-07-30) from run 9326's hit maps.
+            # R1C1 (Bi-207-8890) is deliberately absent: it sits off the
+            # detector face at this position, so it is extrapolated from
+            # the grid the other five slots define rather than guessed.
+            "pixels": {
+                "upper": {"R1C2": [97], "R1C3": [101],
+                          "R2C1": [59], "R2C2": [50], "R2C3": [67]},
+                "lower": {"R1C2": [1019], "R1C3": [1032],
+                          "R2C1": [1059], "R2C2": [1076], "R2C3": [1079]},
+            },
+        },
     },
 }
 

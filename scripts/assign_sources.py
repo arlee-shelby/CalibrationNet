@@ -83,7 +83,6 @@ def generate_review(label: str, force: bool) -> None:
         )
 
     counts = fetch_all_counts(label)
-    baselines = compute_baselines(counts)
 
     with get_session() as session:
         segments = {
@@ -109,7 +108,18 @@ def generate_review(label: str, force: bool) -> None:
               f"and are skipped: {unplaceable[:5]}")
 
     keys = [k for k in sorted(counts) if k not in unplaceable]
-    excesses = {k: {det: excess_map(counts[k][det], baselines[det])
+    # Baselines are per convention, NOT across the whole campaign: a
+    # pixel's intrinsic rate depends on the bias/threshold conditions of
+    # its epoch, so mixing epochs distorts every excess. (Mixing the 2025
+    # and 2026 data inflated one verified source pixel's baseline nearly
+    # 8-fold, which was enough to pull frames a whole pixel row off.)
+    baselines = {}
+    for convention in set(conventions[k] for k in keys):
+        subset = {k: counts[k] for k in keys if conventions[k] == convention}
+        baselines[convention] = compute_baselines(subset)
+        print(f"baselines for {convention}: {len(subset)} segment(s)")
+    excesses = {k: {det: excess_map(counts[k][det],
+                                    baselines[conventions[k]][det])
                     for det in ("upper", "lower")}
                 for k in keys}
     # Slot offsets are a property of the physical frame, so they only
