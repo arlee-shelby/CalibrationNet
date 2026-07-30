@@ -85,6 +85,12 @@ class SourceInstallation(Base):
     installed_on: Mapped[date]
     removed_on: Mapped[Optional[date]]  # NULL = still installed
     slot: Mapped[str] = mapped_column(String(20))
+    # Which physical tray was mounted: "3-slot", "5-slot", "6-slot". The
+    # spacing between slots is a property of the tray (the 6-slot one is
+    # ~0.15 inch longer), so source assignment keys its frame geometry on
+    # this, not on the date — a tray can be removed and re-installed later
+    # and should reuse the geometry already measured for it.
+    holder: Mapped[Optional[str]] = mapped_column(String(20))
     notes: Mapped[Optional[str]]
 
     source: Mapped["Source"] = relationship(back_populates="installations")

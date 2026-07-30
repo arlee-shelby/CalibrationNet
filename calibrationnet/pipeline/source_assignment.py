@@ -35,8 +35,8 @@ from sqlalchemy import func, select
 
 from ..db import get_session
 from ..geometry import physical_position
-from ..models import Pixel, RunPixel, TrapFilterOutput
-from ..positions import CONVENTIONS, predict_slot_position
+from ..models import Pixel, RunPixel, Source, SourceInstallation, TrapFilterOutput
+from ..positions import anchor_for, predict_slot_position
 
 # Hex centers: adjacent pixels are sqrt(3) apart.
 PIXEL_PITCH = math.sqrt(3)
@@ -160,21 +160,16 @@ def _evidence(pos, excess: dict, positions: dict) -> float:
 # --------------------------------------------------------------------------
 # The rigid frame: slot offsets, and locating it in one segment.
 
-def slot_offsets(convention: str, detector: str, slots) -> dict:
+def slot_offsets(holder: str, convention: str, detector: str,
+                 slots) -> dict:
     """{slot: (dx, dy)} of each slot relative to the frame's reference
-    slot, in hex units. These come from the physical frame, so they are
-    the same in every run and convention; the grid vectors are fitted from
-    the anchor's verified slots so that any slot label — including ones
-    the anchor did not have — can be placed."""
-    anchor = CONVENTIONS[convention]["anchor"]
-    if anchor is None:
-        raise ValueError(
-            f"Position convention {convention!r} has no verified anchor "
-            "yet, so source positions cannot be predicted. Verify one "
-            "segment's slot-to-pixel mapping and add it to "
-            "calibrationnet.positions.CONVENTIONS."
-        )
-    verified = anchor["pixels"][detector]
+    slot, in hex units.
+
+    These are a property of the physical tray, so they are the same in
+    every run that tray is mounted in. The grid vectors are fitted from the
+    anchor's verified slots, so any slot label — including ones the anchor
+    did not have — can be placed."""
+    verified = anchor_for(holder, convention)["pixels"][detector]
 
     def center(pixels):
         points = [physical_position(p, detector) for p in pixels]
@@ -234,6 +229,65 @@ def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
     return best_t
 
 
+def installation_for(session, segment) -> tuple:
+    """({slot: (source_id, source_label)}, holder) for one segment.
+
+    The holder decides the frame geometry, so it travels with the slot map
+    rather than being inferred from the date."""
+    day = (segment.start_time or segment.run.start_time).date()
+    rows = session.execute(
+        select(SourceInstallation.slot, Source.id, Source.label,
+               SourceInstallation.holder)
+        .join(Source, SourceInstallation.source_id == Source.id)
+        .where(SourceInstallation.installed_on <= day)
+        .where((SourceInstallation.removed_on.is_(None))
+               | (SourceInstallation.removed_on > day))
+    ).all()
+    holders = {h for _, _, _, h in rows}
+    if len(holders) > 1:
+        raise ValueError(f"segment {segment.run_number}/"
+                         f"{segment.segment_index} spans holders {holders}")
+    return ({slot: (sid, label) for slot, sid, label, _ in rows},
+            holders.pop() if holders else None)
+
+
+def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
+                      holders: dict, offsets: dict) -> tuple:
+    """Two-round frame location for every (segment key, detector).
+
+    Round 1 locates each segment from its readback-based anchor prior;
+    round 2 refits the readback -> frame-position trend across all
+    segments sharing a (holder, convention) and relocates with that
+    tighter, data-driven prior. Returns (frames, trends): frames keyed by
+    (segment key, detector), trends by (holder, convention)."""
+    keys = list(excesses)
+    located = {}
+    for k in keys:
+        for det in ("upper", "lower"):
+            offset = offsets[(holders[k], conventions[k], det)]
+            prior = predict_prior(holders[k], conventions[k], det, offset,
+                                  *key_positions[k])
+            located[(k, det)] = locate_frame(
+                excesses[k][det], det, offset, prior)
+
+    frames, trends = {}, {}
+    for spec in {(holders[k], conventions[k]) for k in keys}:
+        conv_keys = [k for k in keys
+                     if (holders[k], conventions[k]) == spec]
+        by_det = {det: {k: located[(k, det)] for k in conv_keys}
+                  for det in ("upper", "lower")}
+        trend = fit_position_trend(by_det, key_positions)
+        trends[spec] = trend
+        for k in conv_keys:
+            for det in ("upper", "lower"):
+                prior = (predict_trend(trend, det, *key_positions[k])
+                         or located[(k, det)])
+                frames[(k, det)] = locate_frame(
+                    excesses[k][det], det, offsets[spec + (det,)], prior,
+                    window=(2.0, 1.5), sigma=1.0)
+    return frames, trends
+
+
 def fit_position_trend(frames_by_key: dict, key_positions: dict) -> dict:
     """Least-squares (linear, horizontal) -> frame position, per detector,
     over every located segment. Used as the second-round prior, and it is
@@ -266,13 +320,13 @@ def predict_trend(trend: dict, detector: str, linear: float,
             cy[0] * linear + cy[1] * horizontal + cy[2])
 
 
-def predict_prior(convention: str, detector: str, offsets: dict,
-                  linear: float, horizontal: float):
-    """First-round prior for the frame's reference-slot position, from the
-    convention's anchor and slopes."""
+def predict_prior(holder: str, convention: str, detector: str,
+                  offsets: dict, linear: float, horizontal: float):
+    """First-round prior for the frame's reference-slot position, from this
+    tray's anchor and the convention's slopes."""
     reference = _reference_slot(
-        CONVENTIONS[convention]["anchor"]["pixels"][detector])
-    return predict_slot_position(convention, detector, reference,
+        anchor_for(holder, convention)["pixels"][detector])
+    return predict_slot_position(holder, convention, detector, reference,
                                  linear, horizontal)
 
 

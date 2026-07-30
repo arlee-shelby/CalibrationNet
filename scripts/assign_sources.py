@@ -42,10 +42,8 @@ from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
     fetch_all_counts,
-    fit_position_trend,
-    locate_frame,
-    predict_prior,
-    predict_trend,
+    installation_for,
+    locate_all_frames,
     slot_offsets,
     support_at,
 )
@@ -53,19 +51,6 @@ from calibrationnet.pipeline.source_assignment import (
 REVIEW_CSV = "source_assignment_review.csv"
 FLAG_DIST = 0.95      # verification moved almost a full radius -> check
 MIN_EXCESS = 2.0      # peak must be at least 2x its own baseline
-
-
-def slot_sources_for(session, segment: RunSegment) -> dict:
-    """{slot: (source_id, source_label)} installed during this segment."""
-    day = (segment.start_time or segment.run.start_time).date()
-    rows = session.execute(
-        select(SourceInstallation.slot, Source.id, Source.label)
-        .join(Source, SourceInstallation.source_id == Source.id)
-        .where(SourceInstallation.installed_on <= day)
-        .where((SourceInstallation.removed_on.is_(None))
-               | (SourceInstallation.removed_on > day))
-    ).all()
-    return {slot: (sid, label) for slot, sid, label in rows}
 
 
 def has_manual_edits(path: str) -> bool:
@@ -98,7 +83,9 @@ def generate_review(label: str, force: bool) -> None:
             for k in counts
         }
         conventions = {k: segments[k].position_convention for k in counts}
-        slot_maps = {k: slot_sources_for(session, segments[k]) for k in counts}
+        slot_maps, holders = {}, {}
+        for k in counts:
+            slot_maps[k], holders[k] = installation_for(session, segments[k])
 
     unplaceable = sorted(k for k in counts
                          if key_positions[k][0] is None
@@ -126,37 +113,14 @@ def generate_review(label: str, force: bool) -> None:
     # depend on the convention's anchor, not on the segment.
     offsets = {}
     for k in keys:
-        convention = conventions[k]
+        spec = (holders[k], conventions[k])
         for det in ("upper", "lower"):
-            if (convention, det) not in offsets:
-                offsets[(convention, det)] = slot_offsets(
-                    convention, det, slot_maps[k])
+            if spec + (det,) not in offsets:
+                offsets[spec + (det,)] = slot_offsets(
+                    holders[k], conventions[k], det, slot_maps[k])
 
-    # Round 1: locate each segment's frame from a readback-based prior.
-    # Round 2: refit the readback -> frame-position trend across all
-    # segments of a convention, then relocate with that tighter prior.
-    located = {}
-    for k in keys:
-        for det in ("upper", "lower"):
-            prior = predict_prior(conventions[k], det,
-                                  offsets[(conventions[k], det)],
-                                  *key_positions[k])
-            located[(k, det)] = locate_frame(
-                excesses[k][det], det, offsets[(conventions[k], det)], prior)
-
-    frames = {}
-    for convention in set(conventions.values()):
-        conv_keys = [k for k in keys if conventions[k] == convention]
-        by_det = {det: {k: located[(k, det)] for k in conv_keys}
-                  for det in ("upper", "lower")}
-        trend = fit_position_trend(by_det, key_positions)
-        for k in conv_keys:
-            for det in ("upper", "lower"):
-                prior = (predict_trend(trend, det, *key_positions[k])
-                         or located[(k, det)])
-                frames[(k, det)] = locate_frame(
-                    excesses[k][det], det, offsets[(convention, det)], prior,
-                    window=(2.0, 1.5), sigma=1.0)
+    frames, _trends = locate_all_frames(
+        excesses, key_positions, conventions, holders, offsets)
 
     review_rows = []
     flagged = 0
@@ -165,7 +129,7 @@ def generate_review(label: str, force: bool) -> None:
         for det in ("upper", "lower"):
             labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
             tx, ty = frames[(k, det)]
-            slot_offset = offsets[(conventions[k], det)]
+            slot_offset = offsets[(holders[k], conventions[k], det)]
             preds = {slot: (tx + slot_offset[slot][0],
                             ty + slot_offset[slot][1]) for slot in labels}
             excess = excesses[k][det]
