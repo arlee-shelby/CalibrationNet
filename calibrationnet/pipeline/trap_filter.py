@@ -182,5 +182,12 @@ def ingest_filter_output(
             **settings,
         )
         session.add(output)
+        # Flush per pixel so each INSERT carries one energies array.
+        # Left to itself the ORM batches every pending row into a single
+        # multi-VALUES INSERT; for a very long segment (run 9371 seg 5,
+        # 409 subruns) that one statement grew to hundreds of MB and the
+        # server closed the connection mid-send. Same transaction, so
+        # the per-file all-or-nothing behavior is unchanged.
+        session.flush()
         outputs.append(output)
     return outputs

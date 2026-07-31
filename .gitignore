@@ -16,3 +16,5 @@ hitmaps/
 source_assignment_review.csv
 bc_maps.csv
 TrapFilterData/
+optimal_positions_*.csv
+optimal_positions_plan_*

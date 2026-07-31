@@ -221,6 +221,32 @@ header column (4 ns ticks since the epoch — divide by 2.5e8 for seconds).
 Since a segment's window covers only its dwell, waveforms taken while the
 stage was moving belong to no segment and are simply never filtered.
 
+## Planning source positions
+
+```bash
+python scripts/optimal_positions.py            # plan for the current tray
+python scripts/optimal_positions.py --holder 5-slot
+```
+
+[scripts/optimal_positions.py](scripts/optimal_positions.py) turns the
+scan data into a **position plan**: the fewest stage positions that put
+a well-centered source over every reachable pixel, for the run
+automation to step through. It fits the readback→frame trend from all
+ingested scanned segments (so it improves with every ingest), refines
+the tray's slot offsets against the measured count centroids of every
+scanned segment (the anchor alone carries up to a pixel of quantization
+error), searches only the readback range the data proves reachable, and
+grades every (position, pixel) pairing by the predicted offset of the
+slot center from the pixel center — ≤2.6 mm counts as well-centered,
+≤4.5 mm (the neighbor boundary) as covered. Plans are keyed by holder **slot**, never
+by the source in it. Outputs: the plan CSV, a positions-only CSV for
+automation, a saved summary (uncovered pixels always listed with their
+best achievable offset), and per-detector coverage maps.
+`--assume-horizontal LO HI` explores what a wider scan range would buy
+(clearly-marked `_whatif` outputs, for scan planning only). Full
+description with the band-geometry explanation of unreachable pixels:
+[docs/position_planning.md](docs/position_planning.md).
+
 ## Setup
 
 Two things vary by machine: **which python environment** you need, and

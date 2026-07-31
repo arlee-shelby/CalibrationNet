@@ -205,6 +205,76 @@ def _reference_slot(centers: dict) -> str:
     return sorted(centers)[0]
 
 
+def refine_slot_offsets(excesses: dict, frames: dict, offsets_by_det: dict,
+                        keys, radius: float = 2.0,
+                        min_weight: float = 5.0) -> tuple:
+    """Correct anchor-derived slot offsets against ALL scanned segments.
+
+    slot_offsets() snaps each of the anchor's verified sources to its
+    pixel's CENTER, but a source can be verified "on pixel 101" while
+    really sitting up to ~0.9 hex off that center — so every inter-slot
+    spacing inherits up to a pixel of quantization error (seen directly
+    in run 9327, where the predicted R1C2-R1C3 spacing was ~1.2 hex too
+    large). Here every slot's predicted landing (located frame + offset)
+    is compared with the excess-weighted centroid of the counts around
+    it, per segment; the median residual per slot is folded back into
+    the offset. Residuals are taken relative to the reference slot's, so
+    the frame reference point stays put.
+
+    Returns (corrected offsets_by_det, report) with report[det][slot] =
+    (applied_dx, applied_dy, n_segments_measured)."""
+    corrected, report = {}, {}
+    for det, offsets in offsets_by_det.items():
+        residuals = {slot: [] for slot in offsets}
+        for k in keys:
+            frame = frames.get((k, det))
+            if frame is None:
+                continue
+            excess = excesses[k][det]
+            positions = {p: physical_position(p, det) for p in excess}
+            for slot, (ox, oy) in offsets.items():
+                px, py = frame[0] + ox, frame[1] + oy
+                wsum = wx = wy = 0.0
+                for p, e in excess.items():
+                    if e <= 0:
+                        continue
+                    x, y = positions[p]
+                    if (x - px) ** 2 + (y - py) ** 2 > radius ** 2:
+                        continue
+                    w = min(e, EXCESS_CAP)
+                    wsum += w
+                    wx += w * x
+                    wy += w * y
+                if wsum < min_weight:
+                    continue  # slot off the face / too little signal here
+                residuals[slot].append((wx / wsum - px, wy / wsum - py))
+
+        def median(values):
+            ordered = sorted(values)
+            mid = len(ordered) // 2
+            if len(ordered) % 2:
+                return ordered[mid]
+            return (ordered[mid - 1] + ordered[mid]) / 2
+
+        shifts = {
+            slot: ((median([r[0] for r in rs]), median([r[1] for r in rs]))
+                   if rs else (0.0, 0.0))
+            for slot, rs in residuals.items()
+        }
+        ref = shifts[_reference_slot(offsets)]
+        corrected[det] = {
+            slot: (ox + shifts[slot][0] - ref[0],
+                   oy + shifts[slot][1] - ref[1])
+            for slot, (ox, oy) in offsets.items()
+        }
+        report[det] = {
+            slot: (shifts[slot][0] - ref[0], shifts[slot][1] - ref[1],
+                   len(residuals[slot]))
+            for slot in offsets
+        }
+    return corrected, report
+
+
 def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
                  window: tuple = (3.5, 2.5), step: float = 0.25,
                  sigma: float = 2.0) -> tuple:
