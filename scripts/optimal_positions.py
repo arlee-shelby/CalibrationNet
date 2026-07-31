@@ -56,6 +56,7 @@ from calibrationnet.geometry import (
     physical_position,
     pixel_positions,
     mirrored_x,
+    ring_number,
 )
 from calibrationnet.models import RunSegment, SourceInstallation
 from calibrationnet.pipeline.source_assignment import (
@@ -116,47 +117,67 @@ def candidate_coverage(trend, offsets, lins, hors, boundary_hex):
     return cover, best_offset
 
 
-def greedy_plan(cover, tol_hex, max_positions=None) -> list:
+def greedy_plan(cover, tol_hex, max_positions=None, min_gain=1,
+                must=frozenset()) -> list:
     """Fewest candidate indices so that every pixel that CAN be
     well-centered is (pass 1), and every other coverable pixel at least
     gets the source inside it (pass 2). Greedy: repeatedly take the
     candidate adding the most uncovered pixels, ties broken by better
-    centering."""
+    centering.
+
+    A candidate must add at least `min_gain` new pixels — counted as
+    (detector, pixel) pairs over BOTH detectors combined — to earn its
+    dwell; raising it drops the straggler-chasing tail of the plan.
+    `must` pixels are exempt: dwells for them are chosen first, with the
+    same well-centered-first priority, whatever their gain."""
     tight = [frozenset((det, pixel)
                        for (det, _), (pixel, off) in c.items()
                        if off <= tol_hex) for c in cover]
     loose = [frozenset((det, pixel) for (det, _), (pixel, _) in c.items())
              for c in cover]
     chosen, covered = [], set()
-    for pixel_sets in (tight, loose):
-        if pixel_sets is loose:
-            # Positions already chosen visit their loosely-covered pixels
-            # for free — only pixels no chosen position reaches need more.
-            for i in chosen:
-                covered |= loose[i]
+
+    def take(pixel_sets, threshold, universe=None):
+        """Greedy rounds: gain = new pixels (within `universe` if given);
+        for must passes, prefer more total new pixels on equal gain."""
+        nonlocal covered
         while max_positions is None or len(chosen) < max_positions:
-            best, best_gain, best_offset = None, 0, None
+            best, best_key = None, None
             for i, pixels in enumerate(pixel_sets):
-                gain = len(pixels - covered)
-                if gain == 0:
+                new = pixels - covered
+                gain = len(new & universe) if universe is not None else len(new)
+                if gain < threshold:
                     continue
                 offset = (sum(off for _, off in cover[i].values())
                           / len(cover[i]))
-                if gain > best_gain or (gain == best_gain
-                                        and offset < best_offset):
-                    best, best_gain, best_offset = i, gain, offset
+                key = (gain, len(new), -offset)
+                if best_key is None or key > best_key:
+                    best, best_key = i, key
             if best is None:
                 break
             chosen.append(best)
             covered |= pixel_sets[best]
+
+    # Must pixels first, so the general plan builds around their dwells.
+    if must:
+        take(tight, 1, universe=must)
+    take(tight, min_gain)
+    # Positions already chosen visit their loosely-covered pixels for
+    # free — only pixels no chosen position reaches need more dwells.
+    for i in chosen:
+        covered |= loose[i]
+    if must:
+        take(loose, 1, universe=must)
+    take(loose, min_gain)
     return chosen
 
 
 def draw_coverage(det, assigned, tol_mm, boundary_mm, holder, convention,
-                  n_positions, out_path):
+                  n_positions, out_path, excluded=frozenset(), target=127):
     """Coverage map: each covered pixel colored by its predicted offset
     (bright = well centered) and labeled with the plan position that
-    best centers it; uncovered pixels stay white."""
+    best centers it; uncovered pixels stay white; ring-excluded pixels
+    are greyed out."""
     fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
     # Bright = small offset, matching "the pixel lights up" on the
     # standard hit maps; cividis is the collaboration's map and is
@@ -168,6 +189,15 @@ def draw_coverage(det, assigned, tol_mm, boundary_mm, holder, convention,
         stored = pixel_number + (1000 if det == "lower" else 0)
         if det == "lower":
             x = mirrored_x(x)  # facing detectors: same physical spot
+        if pixel_number in excluded:
+            ax.add_patch(RegularPolygon(
+                (x, y), numVertices=6, radius=HEX_RADIUS,
+                orientation=HEX_ORIENTATION,
+                facecolor="0.92", edgecolor="0.75",
+            ))
+            ax.text(x, y, str(pixel_number), ha="center", va="center",
+                    fontsize=5, color="0.7")
+            continue
         entry = assigned.get(stored)
         frac = entry[1] * MM_PER_HEX / boundary_mm if entry else None
         ax.add_patch(RegularPolygon(
@@ -187,10 +217,11 @@ def draw_coverage(det, assigned, tol_mm, boundary_mm, holder, convention,
     ax.set_ylim(-13, 13)
     ax.set_aspect("equal")
     ax.axis("off")
+    note = ", excluded rings greyed" if excluded else ""
     ax.set_title(f"{holder} ({convention}) position plan — {det} detector\n"
-                 f"{len(assigned)}/127 pixels get a position "
+                 f"{len(assigned)}/{target} pixels get a position "
                  f"({centered} well-centered at <={tol_mm} mm) "
-                 f"from {n_positions} positions (P#)")
+                 f"from {n_positions} positions (P#){note}")
     mappable = plt.cm.ScalarMappable(cmap=cmap,
                                      norm=plt.Normalize(0, boundary_mm))
     fig.colorbar(mappable, ax=ax, shrink=0.8,
@@ -235,7 +266,51 @@ def main() -> None:
                         help="use the raw anchor-derived slot offsets "
                              "instead of refining them against all "
                              "scanned segments")
+    parser.add_argument("--exclude-rings", type=int, default=None,
+                        metavar="N",
+                        help="drop pixel rings N and beyond from the plan, "
+                             "counted from center pixel 64 (ring 1 = its "
+                             "six neighbors, ring 6 = the outer edge; so "
+                             "6 drops just the outer ring, 4 drops rings "
+                             "4-6). Applies to both detectors.")
+    parser.add_argument("--min-gain", type=int, default=1, metavar="M",
+                        help="only keep positions that add at least M "
+                             "not-yet-covered pixels, both detectors "
+                             "combined (default 1 = keep any position "
+                             "that helps at all). Raising it drops the "
+                             "straggler-chasing tail: e.g. 3 skips every "
+                             "dwell that exists for just one or two "
+                             "pixels; the summary lists what was skipped.")
+    parser.add_argument("--must-include", type=int, nargs="+", default=[],
+                        metavar="PIXEL",
+                        help="pixels the plan must cover regardless of "
+                             "--min-gain (dwells for them are chosen "
+                             "first, well-centered where possible). Use "
+                             "stored numbering: 1-127 = upper detector, "
+                             "1001-1127 = lower.")
     args = parser.parse_args()
+
+    excluded = set()
+    if args.exclude_rings is not None:
+        if not 1 <= args.exclude_rings <= 6:
+            raise SystemExit(
+                "--exclude-rings must be 1..6: rings are counted from "
+                "pixel 64 (ring 0) and the outer edge is ring 6 — "
+                "64 -> 58 is six hex steps, and 1+6+12+18+24+30+36 = 127."
+            )
+        excluded = {p for p in range(1, 128)
+                    if ring_number(p) >= args.exclude_rings}
+
+    must = set()
+    for p in args.must_include:
+        if not (1 <= p <= 127 or 1001 <= p <= 1127):
+            raise SystemExit(f"--must-include {p}: pixels are 1-127 "
+                             "(upper) or 1001-1127 (lower)")
+        if p % 1000 in excluded:
+            raise SystemExit(f"--must-include {p} conflicts with "
+                             f"--exclude-rings {args.exclude_rings}: it is "
+                             f"on ring {ring_number(p)}")
+        must.add(("lower" if p > 1000 else "upper", p))
 
     # Default to the tray that is physically installed right now
     # (removed_on IS NULL), not to whichever holder has the most scan
@@ -374,7 +449,15 @@ def main() -> None:
 
     cover, best_offset = candidate_coverage(
         trend, offsets_by_det, lins, hors, boundary_hex)
-    chosen = greedy_plan(cover, tol_hex, args.max_positions)
+    if excluded:
+        report(f"  excluding rings >= {args.exclude_rings} from pixel 64: "
+               f"{len(excluded)} pixels dropped per detector")
+        for c in cover:
+            for key in [key for key, (pixel, _) in c.items()
+                        if pixel % 1000 in excluded]:
+                del c[key]
+    chosen = greedy_plan(cover, tol_hex, args.max_positions, args.min_gain,
+                         must=frozenset(must))
     if not chosen:
         raise SystemExit(
             "no position in the allowed range puts a slot within "
@@ -436,25 +519,39 @@ def main() -> None:
            f"{stem}_positions.csv ({len(chosen)} positions)")
 
     report("coverage summary:")
+    target = 127 - len(excluded)
     for det in ("upper", "lower"):
         centered = sum(off <= tol_hex for _, off in assigned[det].values())
-        report(f"  {det}: {len(assigned[det])}/127 pixels get a position "
-               f"({centered} well-centered at <={args.tolerance_mm} mm, "
-               f"{len(assigned[det]) - centered} at "
-               f"{args.tolerance_mm}-{args.boundary_mm} mm)")
+        report(f"  {det}: {len(assigned[det])}/{target} pixels get a "
+               f"position ({centered} well-centered at "
+               f"<={args.tolerance_mm} mm, {len(assigned[det]) - centered} "
+               f"at {args.tolerance_mm}-{args.boundary_mm} mm)")
         base = 1000 if det == "lower" else 0
         uncovered = [p for p in range(1, 128)
-                     if p + base not in assigned[det]]
-        if uncovered:
+                     if p not in excluded and p + base not in assigned[det]]
+        unreachable = [p for p in uncovered
+                       if best_offset[det][p + base] > boundary_hex]
+        skipped = [p for p in uncovered if p not in unreachable]
+        if unreachable:
             detail = ", ".join(
                 f"{p} (best {best_offset[det][p + base] * MM_PER_HEX:.1f}mm)"
-                for p in uncovered)
+                for p in unreachable)
             report(f"    no position within {args.boundary_mm} mm — "
                    f"best achievable offset shown: {detail}")
+        if skipped:
+            report(f"    coverable but below --min-gain {args.min_gain}: "
+                   f"{compress(skipped)}")
         draw_coverage(det, assigned[det], args.tolerance_mm,
                       args.boundary_mm, holder, convention, len(chosen),
-                      f"{stem}_{det}.png")
+                      f"{stem}_{det}.png", excluded=excluded, target=target)
         report(f"    map: {stem}_{det}.png")
+    if must:
+        missing = sorted(p for det, p in must if p not in assigned[det])
+        if missing:
+            report(f"  WARNING: must-include pixel(s) not coverable "
+                   f"anywhere in the allowed range: {missing}")
+        else:
+            report(f"  must-include: all {len(must)} pixel(s) covered")
 
     with open(f"{stem}_summary.txt", "w") as fh:
         fh.write("\n".join(lines) + "\n")

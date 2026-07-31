@@ -86,9 +86,12 @@ runs ──< run_segments ──< run_pixels >── pixels
   active installation is selected by its start_time. Slot labels follow
   the convention below.
 - **isotope_decay_energies** — the energy lines an isotope's decay
-  produces (e.g. 207Bi "CE-K 976"); the count varies by isotope. This is
-  the line's *identity* only — the keV values believed for it live in
-  kev_peaks.
+  produces; the count varies by isotope. This is the line's *identity*
+  only — emission type + rounded energy, e.g. "CE 976", "Auger 56" — and
+  never changes; the keV values believed for it live in kev_peaks. Both
+  tables are seeded from data/decay_energies.csv by
+  scripts/seed_decay_energies.py (idempotent; a changed value becomes a
+  new kev_peaks row, never an overwrite).
 - **kev_peaks** — versioned "known" keV values for a decay line — the keV
   side of a calibration point: origin ("nndc" or "simulation"), version
   label, error, created_at. source_id is NULL for generic literature
@@ -220,6 +223,26 @@ Waveforms are selected by wall-clock time, using nabPy's `unix timestamp`
 header column (4 ns ticks since the epoch — divide by 2.5e8 for seconds).
 Since a segment's window covers only its dwell, waveforms taken while the
 stage was moving belong to no segment and are simply never filtered.
+
+## Fitting spectra
+
+```bash
+python scripts/fit_spectra.py --run 8622 --pixels 60
+python scripts/fit_spectra.py --run 9327                 # every fitted pixel
+python scripts/fit_spectra.py --run 8622 --pixels 60 --plot fit_plots/
+```
+
+[scripts/fit_spectra.py](scripts/fit_spectra.py) pulls a run pixel's trap
+filter output, fits its peaks with the developed physics code
+([calibrationnet/fit_functions.py](calibrationnet/fit_functions.py) —
+moved into the package byte-identical, never modified), and stores every
+fit in spectrum_fits via `SpectrumFit.from_lmfit`. Which fits run comes
+from the pixel's assigned source: each isotope has recipes (ADC window,
+peak count, peak-finder settings, initial widths), so Bi-207 produces
+the 6-peak CE fit and the 2-peak Auger fit per output. Re-running
+replaces the fit with the same (output, label). Centroid errors above 5%
+are flagged `CHECK` in the output; `--plot` saves a QA figure per fit.
+Storage details: [docs/fit_storage.md](docs/fit_storage.md).
 
 ## Planning source positions
 

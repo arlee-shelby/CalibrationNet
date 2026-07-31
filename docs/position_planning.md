@@ -131,3 +131,26 @@ All named `optimal_positions_plan_<holder>_<convention>*`:
 | `--max-positions` | none | truncate the plan; positions are ordered by coverage gain, so this keeps the most valuable dwells |
 | `--assume-linear/-horizontal` | none | what-if range for scan planning (`_whatif` outputs) |
 | `--no-refine` | off | use raw anchor-derived slot offsets (skip the data-driven refinement) |
+| `--exclude-rings N` | none | drop pixel rings N and beyond (both detectors) — they're greyed on the maps and the plan spends no positions on them |
+| `--min-gain M` | 1 | only keep positions adding ≥ M new pixels — counted as (detector, pixel) pairs over both detectors combined, so one new pixel on each detector is a gain of 2. Raising it drops the straggler-chasing tail — dramatically shorter plans — at the cost of the pixels those dwells existed for (listed as "coverable but below --min-gain" in the summary). The skipped stragglers are often exactly the hard-to-reach pixels; name the ones you need with `--must-include`. |
+| `--must-include P ...` | none | pixels the plan must cover regardless of `--min-gain` (stored numbering: 1-127 upper, 1001-1127 lower). Their dwells are chosen first, well-centered where possible, and the rest of the plan builds around them. The summary confirms coverage or warns if one is unreachable; conflicts with `--exclude-rings` are rejected. |
+
+## Pixel rings
+
+The experiment describes the detector in rings around the center pixel
+64: ring 1 is its six neighbors {51, 52, 63, 65, 76, 77}, ring 2 the
+twelve around those, out to ring 6 — the outer edge (64 → 58 is six hex
+steps; 1+6+12+18+24+30+36 = 127). The general concept lives in
+`calibrationnet/geometry.py`:
+
+```python
+ring(64, 1)        # {51, 52, 63, 65, 76, 77}
+ring(89, 1)        # {77, 78, 88, 90, 99, 100} — any pixel can be a center
+ring(1089, 1)      # same: both detectors share the layout
+ring_number(58)    # 6 — a pixel's ring index in the detector convention
+```
+
+Rings around non-center pixels are partial near the edge. The planner's
+`--exclude-rings N` uses `ring_number`: pixels with ring index >= N are
+dropped from the plan entirely (typically `--exclude-rings 6` — the
+outer ring is rarely needed), which also shortens the position list.

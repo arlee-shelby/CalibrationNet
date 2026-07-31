@@ -65,3 +65,39 @@ def neighbors(pixel: int) -> set:
         p for p, (x, y) in pos.items()
         if p != pixel and math.hypot(x - x0, y - y0) < limit
     }
+
+
+# The experiment's ring convention: ring 1 of a pixel is its (up to six)
+# touching neighbors, ring 2 the twelve around those, and so on. Around
+# the CENTER pixel 64 the rings are full and tile the whole detector —
+# 127 = 1 + 6 + 12 + 18 + 24 + 30 + 36 — so the outer edge is ring 6
+# (64 -> 63 -> 62 -> 61 -> 60 -> 59 -> 58 is six steps). Around any
+# other pixel rings are partial near the edge (e.g. ring 1 of 89 is
+# {77, 78, 88, 90, 99, 100}). Both detectors share the layout, so
+# 1001-1127 map onto the same rings.
+
+def ring(pixel: int, n: int) -> set:
+    """Pixel numbers (1-127) exactly n hex steps from `pixel` — its n-th
+    ring. Accepts either detector's numbering; n=0 is the pixel itself."""
+    frontier = seen = {pixel % 1000}
+    for _ in range(n):
+        frontier = {q for r in frontier for q in neighbors(r)} - seen
+        seen = seen | frontier
+    return frontier
+
+
+def ring_number(pixel: int, center: int = 64) -> int:
+    """How many hex steps from `center` to `pixel` (0 = the center
+    itself). With the default center this is THE ring index of a pixel
+    in the detector-wide convention: pixel 64 is ring 0, the outer edge
+    is ring 6."""
+    target = pixel % 1000
+    frontier = seen = {center % 1000}
+    n = 0
+    while target not in frontier:
+        frontier = {q for r in frontier for q in neighbors(r)} - seen
+        seen = seen | frontier
+        if not frontier:
+            raise ValueError(f"pixel {pixel} is not on the detector grid")
+        n += 1
+    return n
