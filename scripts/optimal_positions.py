@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from calibrationnet.db import get_session
 from calibrationnet.geometry import physical_position
-from calibrationnet.models import RunSegment
+from calibrationnet.models import RunSegment, SourceInstallation
 from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
@@ -57,6 +57,26 @@ def main() -> None:
     parser.add_argument("--pixels", type=int, nargs="*",
                         help="limit output to these pixel numbers")
     args = parser.parse_args()
+
+    # Default to the tray that is physically installed right now
+    # (removed_on IS NULL), not to whichever holder has the most scan
+    # data — otherwise a well-scanned old tray silently wins.
+    if args.holder is None:
+        with get_session() as session:
+            installed = sorted(set(session.scalars(
+                select(SourceInstallation.holder)
+                .where(SourceInstallation.removed_on.is_(None),
+                       SourceInstallation.holder.is_not(None))
+            )))
+        if len(installed) == 1:
+            args.holder = installed[0]
+            print(f"current installation: {args.holder}")
+        else:
+            raise SystemExit(
+                f"cannot determine the current holder (installations with "
+                f"removed_on NULL name {installed or 'no'} holders) — pass "
+                f"--holder explicitly."
+            )
 
     counts = fetch_all_counts(args.label)
     with get_session() as session:
