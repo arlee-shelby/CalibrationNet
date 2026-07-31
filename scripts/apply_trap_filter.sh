@@ -1,15 +1,18 @@
 #!/bin/bash
-# SLURM array task: apply the trap filter to ONE run segment and ingest it.
+# SLURM array task: apply the trap filter to a CHUNK of run segments and
+# ingest them.
 #
 # Not run directly — scripts/submit_trap_filter.sh builds the manifest and
-# submits the array. Each task reads its own line of the manifest, so the
-# work unit is a segment (~30 min of data, ~10 min of compute) and no task
-# comes near the wall-clock limit however long the run is.
+# submits the array. Each task processes $9 consecutive manifest lines
+# (segments, ~30 min of data / ~10 min of compute each). Chunking exists
+# because the QOS caps SUBMITTED jobs per user (QOSMaxSubmitJobPerUserLimit,
+# ~50 on embers) and every array task counts against it at submission time —
+# so a big batch must mean more segments per task, not more tasks.
 #
 #   $1 manifest file ("<run> <segment>" per line)
 #   $2 line offset (for run lists longer than one array)
 #   $3 h5 directory   $4 risetime   $5 flattop   $6 falltime   $7 wave type
-#   $8 label
+#   $8 label   $9 segments per task (default 1)
 #
 #SBATCH -A gts-ajezghani3
 #SBATCH -J calnet-trapfilter
@@ -36,15 +39,7 @@ FLATTOP=$5
 FALLTIME=$6
 WAVE=$7
 LABEL=$8
-
-# embers is preemptible; --requeue plus per-segment idempotence means a
-# preempted task simply redoes its own segment.
-LINE=$((OFFSET + SLURM_ARRAY_TASK_ID + 1))
-read -r RUN SEGMENT < <(sed -n "${LINE}p" "$MANIFEST")
-if [ -z "${RUN:-}" ]; then
-    echo "manifest $MANIFEST has no line $LINE — nothing to do"
-    exit 0
-fi
+CHUNK=${9:-1}
 
 cd "${SLURM_SUBMIT_DIR}"
 
@@ -67,8 +62,27 @@ import_nabpy()"; then
     exit 1
 fi
 
-echo "task ${SLURM_ARRAY_TASK_ID} -> run ${RUN} segment ${SEGMENT}"
-python scripts/apply_trap_filter.py \
-    -d "$H5_DIR" -r "$RUN" -s "$SEGMENT" \
-    -rt "$RISETIME" -ft "$FLATTOP" -fall "$FALLTIME" \
-    -w "$WAVE" --label "$LABEL"
+# embers is preemptible; --requeue plus per-segment idempotence means a
+# preempted or partly-failed task can simply be resubmitted — the next
+# manifest leaves out whatever already made it in. A failing segment does
+# not stop the rest of the chunk; the task reports it at the end instead.
+START=$((OFFSET + SLURM_ARRAY_TASK_ID * CHUNK + 1))
+FAILED=0
+for LINE in $(seq "$START" $((START + CHUNK - 1))); do
+    read -r RUN SEGMENT < <(sed -n "${LINE}p" "$MANIFEST")
+    if [ -z "${RUN:-}" ]; then
+        echo "manifest $MANIFEST ends before line $LINE — chunk done"
+        break
+    fi
+    echo "task ${SLURM_ARRAY_TASK_ID} -> run ${RUN} segment ${SEGMENT}"
+    python scripts/apply_trap_filter.py \
+        -d "$H5_DIR" -r "$RUN" -s "$SEGMENT" \
+        -rt "$RISETIME" -ft "$FLATTOP" -fall "$FALLTIME" \
+        -w "$WAVE" --label "$LABEL" \
+        || { echo "FAILED: run ${RUN} segment ${SEGMENT}"; FAILED=$((FAILED + 1)); }
+done
+
+if [ "$FAILED" -gt 0 ]; then
+    echo "${FAILED} segment(s) in this chunk failed — re-run submit_trap_filter.sh to redo them"
+    exit 1
+fi

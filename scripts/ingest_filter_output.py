@@ -1,16 +1,23 @@
 """Store trap filter output CSVs (one row per pixel per file).
 
 Rise time / flat top come from the filename (rtNNN_ftNN, in 4 ns time
-bins); the run number comes from a RunNNNN_ filename prefix or --run.
-Fall time is not encoded in filenames; default 1250 (the standard nabPy
-setting is rise/flattop/fall = 1250/50/1250). Only ingest curated outputs
-— not the full optimization scan.
+bins); the run number comes from a RunNNNN_ filename prefix or --run; the
+segment comes from a segN filename component or --segment (default 0 —
+correct for every single-position run). Fall time is not encoded in all
+filenames; default 1250 (the standard nabPy setting is rise/flattop/fall
+= 1250/50/1250). Only ingest curated outputs — not the full optimization
+scan.
 
-    # one file, explicit run:
+    # one file, explicit run (single-position run -> segment 0):
     python scripts/ingest_filter_output.py filter_output_rt100_ft10.csv \\
         --run 8622 --label comparison
     # a whole folder of RunNNNN_-prefixed files:
     python scripts/ingest_filter_output.py nabPyStandardFilterOutputs/ \\
+        --label nabpy-standard
+    # a CSV left behind by an apply_trap_filter.py task whose ingest step
+    # failed (run and segment are parsed from the name):
+    python scripts/ingest_filter_output.py \\
+        data/TrapFilterData/Run9371/Run9371_seg7_singles_filter_output_rt1250_ft50_fall1250.csv \\
         --label nabpy-standard
 """
 
@@ -31,6 +38,9 @@ def main() -> None:
     parser.add_argument("--run", type=int, default=None,
                         help="run number (otherwise parsed from RunNNNN_ "
                              "filename prefix)")
+    parser.add_argument("--segment", type=int, default=None,
+                        help="segment index (otherwise parsed from a segN "
+                             "filename component; default 0)")
     parser.add_argument("--falltime", type=float, default=1250,
                         help="trap fall time in 4 ns bins (default 1250)")
     parser.add_argument("--label", default=None,
@@ -44,17 +54,22 @@ def main() -> None:
     failed = []
     with get_session() as session:
         for path in files:
-            run_number = args.run or parse_filter_filename(path).get("run_number")
+            parsed = parse_filter_filename(path)
+            run_number = args.run or parsed.get("run_number")
             if run_number is None:
                 parser.error(f"{path.name}: no RunNNNN_ prefix and no --run")
+            segment = (args.segment if args.segment is not None
+                       else parsed.get("segment_index", 0))
             try:
                 outputs = ingest_filter_output(
                     session, run_number, path,
                     trap_falltime=args.falltime, label=args.label,
+                    segment_index=segment,
                 )
                 session.commit()  # per file, so one failure loses nothing else
                 total = sum(len(o.energies) for o in outputs)
-                print(f"run {run_number}: {len(outputs)} pixel outputs "
+                print(f"run {run_number} segment {segment}: "
+                      f"{len(outputs)} pixel outputs "
                       f"({total} waveforms) from {path.name}", flush=True)
             except Exception as exc:
                 session.rollback()

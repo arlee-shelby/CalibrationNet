@@ -183,8 +183,7 @@ run becomes 37 short array tasks instead of one multi-hour job that could
 hit the 7:59 wall limit.
 
 ```bash
-# one array task per segment still missing this filter setting;
-# SLURM's %50 throttle respects the 50-job account limit itself
+# one array over every segment still missing this filter setting
 ./scripts/submit_trap_filter.sh run_list.txt /storage/.../TempCal/
 
 # non-default settings: risetime flattop falltime wave label
@@ -194,15 +193,19 @@ hit the 7:59 wall limit.
 - [scripts/submit_trap_filter.sh](scripts/submit_trap_filter.sh) asks the
   database which segments still need the setting (via
   [scripts/pending_segments.py](scripts/pending_segments.py)), writes a
-  manifest, and submits one array over it — splitting into several arrays
-  if the list exceeds `MAX_ARRAY`. **Re-running it is how you finish an
+  manifest, and submits one array over it. The QOS caps *submitted* jobs
+  per user (~50 on embers) and every array task counts against that cap
+  at submission time, so batches bigger than `MAX_SUBMIT` (default 40)
+  tasks are packed as several consecutive segments per task, with the
+  walltime scaled to match. **Re-running it is how you finish an
   interrupted batch**: anything already ingested is left out of the new
   manifest, so nothing is redone. No submit-and-poll loop and nothing to
   keep alive in tmux.
 - [scripts/apply_trap_filter.sh](scripts/apply_trap_filter.sh) is the array
-  task: it reads its manifest line and runs the segment. `--qos=embers` is
-  preemptible, so it sets `--requeue`; a preempted task simply redoes its
-  own segment.
+  task: it works through its chunk of manifest lines, one segment at a
+  time. `--qos=embers` is preemptible, so it sets `--requeue`; a
+  preempted task's segments are redone on the next submission, and one
+  failing segment doesn't stop the rest of its chunk.
 - [scripts/apply_trap_filter.py](scripts/apply_trap_filter.py) does one
   segment: looks up that segment's dwell window, binary-searches which
   subruns overlap it, filters only those waveforms, ingests the energies,
