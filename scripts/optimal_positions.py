@@ -58,7 +58,7 @@ from calibrationnet.geometry import (
     mirrored_x,
     ring_number,
 )
-from calibrationnet.models import RunSegment, SourceInstallation
+from calibrationnet.models import Run, RunSegment, SourceInstallation
 from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
@@ -288,6 +288,17 @@ def main() -> None:
                              "first, well-centered where possible). Use "
                              "stored numbering: 1-127 = upper detector, "
                              "1001-1127 = lower.")
+    parser.add_argument("--runs", type=int, nargs="+", default=None,
+                        help="fit the trend and plan from these runs' "
+                             "segments ONLY. Use this to keep magnet-"
+                             "field epochs separate: the readback->frame "
+                             "mapping depends on the field, so segments "
+                             "taken at different main/udet currents must "
+                             "not share a trend.")
+    parser.add_argument("--tag", default=None,
+                        help="suffix for every output filename (e.g. "
+                             "'137A') so this plan is written alongside "
+                             "existing files instead of replacing them")
     args = parser.parse_args()
 
     excluded = set()
@@ -359,6 +370,12 @@ def main() -> None:
     spec = max(candidates, key=lambda s: len(candidates[s]))
     holder, convention = spec
     spec_keys = candidates[spec]
+    if args.runs:
+        spec_keys = [k for k in spec_keys if k[0] in set(args.runs)]
+        if not spec_keys:
+            raise SystemExit(f"no scanned segments from runs {args.runs} "
+                             f"for holder {args.holder!r} — are their trap "
+                             "filter outputs ingested?")
 
     lines = []  # everything printed is also saved to <stem>_summary.txt
 
@@ -367,7 +384,19 @@ def main() -> None:
         lines.append(text)
 
     report(f"planning {holder} under {convention} "
-           f"({len(spec_keys)} scanned segments)")
+           f"({len(spec_keys)} scanned segments"
+           f"{f' from runs {sorted(set(args.runs))}' if args.runs else ''})")
+
+    # The readback -> frame mapping depends on the magnet field, so a
+    # trend fitted across field settings is meaningless. Warn loudly.
+    with get_session() as session:
+        fields = {(r.main, r.udet) for r in session.scalars(
+            select(Run).where(Run.run_number.in_(
+                {k[0] for k in spec_keys})))}
+    if len(fields) > 1:
+        report(f"  WARNING: these segments span DIFFERENT magnet settings "
+               f"(main, udet): {sorted(fields)} — the fitted trend mixes "
+               f"field epochs. Use --runs to plan within one epoch.")
 
     # Same evidence preparation as assignment, restricted to this spec so
     # baselines stay within one bias/threshold epoch.
@@ -498,6 +527,8 @@ def main() -> None:
                 report(f"      {det}: " + "  ".join(parts))
 
     stem = OUT_TEMPLATE.format(holder=holder, convention=convention)
+    if args.tag:
+        stem += f"_{args.tag}"
     if whatif:
         stem += "_whatif"
     with open(f"{stem}.csv", "w", newline="") as fh:

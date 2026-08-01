@@ -87,11 +87,12 @@ runs ──< run_segments ──< run_pixels >── pixels
   the convention below.
 - **isotope_decay_energies** — the energy lines an isotope's decay
   produces; the count varies by isotope. This is the line's *identity*
-  only — emission type + rounded energy, e.g. "CE 976", "Auger 56" — and
-  never changes; the keV values believed for it live in kev_peaks. Both
-  tables are seeded from data/decay_energies.csv by
-  scripts/seed_decay_energies.py (idempotent; a changed value becomes a
-  new kev_peaks row, never an overwrite).
+  — emission type + rounded energy, e.g. "CE 976", "Auger 56" — plus its
+  NNDC emission intensity (a stable property of the line, unlike the
+  keV values, which live versioned in kev_peaks). Both tables are
+  seeded from data/decay_energies.csv by scripts/seed_decay_energies.py
+  (idempotent; a changed keV value becomes a new kev_peaks row, never an
+  overwrite; intensities update in place).
 - **kev_peaks** — versioned "known" keV values for a decay line — the keV
   side of a calibration point: origin ("nndc" or "simulation"), version
   label, error, created_at. source_id is NULL for generic literature
@@ -234,15 +235,25 @@ python scripts/fit_spectra.py --run 8622 --pixels 60 --plot fit_plots/
 
 [scripts/fit_spectra.py](scripts/fit_spectra.py) pulls a run pixel's trap
 filter output, fits its peaks with the developed physics code
-([calibrationnet/fit_functions.py](calibrationnet/fit_functions.py) —
-moved into the package byte-identical, never modified), and stores every
-fit in spectrum_fits via `SpectrumFit.from_lmfit`. Which fits run comes
-from the pixel's assigned source: each isotope has recipes (ADC window,
-peak count, peak-finder settings, initial widths), so Bi-207 produces
-the 6-peak CE fit and the 2-peak Auger fit per output. Re-running
-replaces the fit with the same (output, label). Centroid errors above 5%
-are flagged `CHECK` in the output; `--plot` saves a QA figure per fit.
-Storage details: [docs/fit_storage.md](docs/fit_storage.md).
+([calibrationnet/fit_functions.py](calibrationnet/fit_functions.py)),
+and stores every fit in spectrum_fits via `SpectrumFit.from_lmfit`.
+Which fits run comes from the pixel's assigned source: each isotope has
+recipes ([calibrationnet/fit_recipes.py](calibrationnet/fit_recipes.py):
+ADC window, peak count, peak-finder settings, initial widths), so Bi-207
+produces the 6-peak CE fit and the 2-peak Auger fit per output.
+Re-running replaces the fit with the same (output, label). Centroid
+errors above 5% (widths above 50%) are flagged `CHECK`; `--plot` saves a
+QA figure per fit. Storage details:
+[docs/fit_storage.md](docs/fit_storage.md).
+
+The fit code is under a strict change policy
+([docs/pipeline_roadmap.md](docs/pipeline_roadmap.md)): the physics
+functions are frozen, and any change to the changeable ones must pass
+[scripts/benchmark_fits.py](scripts/benchmark_fits.py), which verifies a
+byte-identical reference copy
+([calibrationnet/fit_functions_reference.py](calibrationnet/fit_functions_reference.py))
+plus frozen-function integrity, and compares live-vs-reference fit
+results (centroid pulls, chi2, success) over real data.
 
 ## Planning source positions
 

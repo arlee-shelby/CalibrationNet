@@ -7,6 +7,7 @@ The slow-controls tunnel must be open (or wrap the call):
 """
 
 import argparse
+from datetime import timedelta
 from pathlib import Path
 
 from calibrationnet.db import get_session
@@ -19,7 +20,16 @@ def main() -> None:
     parser.add_argument(
         "--file", type=Path, help="text file with one run number per line"
     )
+    parser.add_argument(
+        "--min-dwell", type=float, default=None, metavar="MINUTES",
+        help="shortest stationary stretch that counts as a dwell segment "
+             "(default 5). Lower it for runs whose grid dwells are "
+             "themselves ~5 min, where the default sits on the boundary "
+             "and drops segments."
+    )
     args = parser.parse_args()
+    min_dwell = (timedelta(minutes=args.min_dwell)
+                 if args.min_dwell is not None else None)
 
     run_numbers = list(args.run_numbers)
     if args.file:
@@ -33,7 +43,7 @@ def main() -> None:
     with get_session() as session:
         for run_number in run_numbers:
             try:
-                run = ingest_run(session, run_number)
+                run = ingest_run(session, run_number, min_dwell=min_dwell)
                 session.commit()  # per run, so one failure doesn't lose the rest
                 print(f"ingested run {run.run_number}: "
                       f"{run.start_time} -> {run.end_time}")

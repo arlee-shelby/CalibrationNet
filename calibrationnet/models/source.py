@@ -115,7 +115,15 @@ class IsotopeDecayEnergy(Base):
     isotope_id: Mapped[int] = mapped_column(
         ForeignKey("isotopes.id"), index=True
     )
-    label: Mapped[str] = mapped_column(String(50))  # e.g. "CE-K 976"
+    label: Mapped[str] = mapped_column(String(50))  # e.g. "CE 976"
+
+    # NNDC emission intensity in percent — a stable property of the line
+    # (unlike keV values, which are versioned in kev_peaks), used to
+    # pick matching anchors and predict which lines low-statistics
+    # pixels can see. NULL when not reported (e.g. the Bi-207 Auger
+    # lines: NNDC gives only a combined 2.9% for the whole Auger group).
+    intensity: Mapped[Optional[float]]
+    intensity_error: Mapped[Optional[float]]
 
     isotope: Mapped["Isotope"] = relationship(
         back_populates="decay_energies"

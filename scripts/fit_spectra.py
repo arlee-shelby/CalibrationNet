@@ -29,22 +29,8 @@ from sqlalchemy import select
 
 import calibrationnet.fit_functions as fit_functions
 from calibrationnet.db import get_session
+from calibrationnet.fit_recipes import RECIPES
 from calibrationnet.models import RunPixel, SpectrumFit, TrapFilterOutput
-
-# One entry per isotope: the fits its spectrum takes. Windows are ADC
-# histogram bins; the peak finder settings and initial width guesses are
-# the developed-and-trusted values from the physics workflow.
-RECIPES = {
-    "Bi-207": [
-        dict(label="ce-6peak", bounds=(1200, 3300), n_peaks=6,
-             peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
-             widths={"sig1": 3, "sig2": 3, "sig3": 3,
-                     "sig4": 5, "sig5": 5, "sig6": 5}),
-        dict(label="auger-2peak", bounds=(20, 180), n_peaks=2,
-             peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
-             widths={"sig1": 3, "sig2": 3, "sig3": 5}),
-    ],
-}
 
 
 def run_recipe(data, recipe, plot_path=None):
@@ -67,18 +53,22 @@ def run_recipe(data, recipe, plot_path=None):
     return result
 
 
+# A fit is flagged CHECK when any centroid error exceeds 5% of its
+# value, or any width error exceeds 50% (widths carry intrinsically
+# larger errors — at 5% even known-good fits flag). Missing errors flag.
+ERROR_THRESHOLDS = {"cen": 0.05, "sig": 0.50}
+
+
 def centroid_report(result):
-    """'cen1=1330.5+-0.1 ...' — the numbers that feed calibrations.
-    Suspicious when any centroid OR width error is missing or exceeds
-    5% of its value (the symptom of a badly placed fit window)."""
+    """'cen1=1330.5+-0.1 ...' — the numbers that feed calibrations."""
     lines, suspicious = [], False
-    for prefix in ("cen", "sig"):
+    for prefix, threshold in ERROR_THRESHOLDS.items():
         parts = []
         for name in sorted(p for p in result.params
                            if p.startswith(prefix)):
             value = result.params[name].value
             stderr = result.params[name].stderr
-            if stderr is None or stderr > 0.05 * abs(value):
+            if stderr is None or stderr > threshold * abs(value):
                 suspicious = True
             err = "?" if stderr is None else f"{stderr:.2f}"
             parts.append(f"{name}={value:.1f}+-{err}")

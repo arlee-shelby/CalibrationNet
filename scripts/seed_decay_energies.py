@@ -1,14 +1,15 @@
 """Seed isotope decay lines and their known keV values from
 data/decay_energies.csv (columns: isotope, label, energy_kev,
-energy_error_kev, origin, notes).
+energy_error_kev, intensity, intensity_error, origin, notes).
 
 The label is the line's IDENTITY — emission type + rounded energy, e.g.
 "CE 976" or "Auger 56" — and never changes; the exact keV values live in
 kev_peaks, which is versioned: a changed value in the CSV is stored as a
 NEW kev_peaks row (source_id NULL = generic literature value), the old
 row is kept, and calibration_points keep pointing at whichever row they
-used. An empty energy_error_kev means "not reported" and is stored NULL,
-not 0.
+used. Intensities (NNDC emission %, stable properties of the line) live
+on the line itself and ARE updated in place. Empty error/intensity
+fields mean "not reported" and are stored NULL, not 0.
 
 Idempotent: decay lines are matched by (isotope, label); a kev_peaks row
 is only added if no identical one exists.
@@ -47,6 +48,10 @@ def main() -> None:
             energy = float(row["energy_kev"])
             error = (float(row["energy_error_kev"])
                      if row["energy_error_kev"].strip() else None)
+            intensity = (float(row["intensity"])
+                         if row["intensity"].strip() else None)
+            intensity_error = (float(row["intensity_error"])
+                               if row["intensity_error"].strip() else None)
             origin = row["origin"].strip()
             notes = row["notes"].strip() or None
 
@@ -60,6 +65,9 @@ def main() -> None:
                 session.add(line)
                 session.flush()
                 lines_created += 1
+            # Stable line properties: updated in place, not versioned.
+            line.intensity = intensity
+            line.intensity_error = intensity_error
 
             existing = session.scalars(
                 select(KeVPeak)

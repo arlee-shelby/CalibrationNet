@@ -14,8 +14,14 @@ from .slow_controls import fetch_run
 _RUN_COLUMNS = {c.name for c in Run.__table__.columns} - {"run_number"}
 
 
-def ingest_run(session: Session, run_number: int) -> Run:
+def ingest_run(session: Session, run_number: int, min_dwell=None) -> Run:
     """Create (or refresh) the Run row and its segments from slow controls.
+
+    min_dwell (timedelta, default motion_control.MIN_DWELL = 5 min) is
+    the shortest stationary stretch that counts as a dwell segment —
+    lower it for runs whose grid dwells are themselves ~5 minutes (e.g.
+    run 9402), where the default would sit exactly on the boundary and
+    silently drop segments.
 
     Idempotent: re-ingesting an existing run updates fields in place and
     never deletes a segment that already has analysis hanging off it.
@@ -49,11 +55,11 @@ def ingest_run(session: Session, run_number: int) -> Run:
                 setattr(run, key, value)
 
     session.flush()  # the run must exist before its segments reference it
-    sync_segments(session, run, data)
+    sync_segments(session, run, data, min_dwell=min_dwell)
     return run
 
 
-def derive_segments(run: Run, data: dict) -> list:
+def derive_segments(run: Run, data: dict, min_dwell=None) -> list:
     """The run's source-position segments, as dicts ready for RunSegment.
 
     Runs from 2026-07-24 get one segment per dwell in the motion-control
@@ -62,7 +68,8 @@ def derive_segments(run: Run, data: dict) -> list:
     """
     convention = convention_for_date(run.start_time.date())
     if convention == INCHES_2026:
-        periods = dwell_periods(run.start_time, run.end_time)
+        kwargs = {} if min_dwell is None else {"min_dwell": min_dwell}
+        periods = dwell_periods(run.start_time, run.end_time, **kwargs)
     else:
         periods = [{
             "start_time": run.start_time,
@@ -75,7 +82,8 @@ def derive_segments(run: Run, data: dict) -> list:
     return periods
 
 
-def sync_segments(session: Session, run: Run, data: dict) -> list:
+def sync_segments(session: Session, run: Run, data: dict,
+                  min_dwell=None) -> list:
     """Match the run's segments to the derived ones, in place.
 
     Segments are matched by index, so re-ingesting refreshes times and
@@ -84,7 +92,7 @@ def sync_segments(session: Session, run: Run, data: dict) -> list:
     derivation is only removed if nothing hangs off it; otherwise it is
     kept and reported, since deleting it would discard real analysis.
     """
-    derived = derive_segments(run, data)
+    derived = derive_segments(run, data, min_dwell=min_dwell)
     existing = {s.segment_index: s for s in run.segments}
 
     for index, period in enumerate(derived):
