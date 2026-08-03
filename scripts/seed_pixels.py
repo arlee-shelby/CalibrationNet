@@ -1,8 +1,11 @@
 """Seed the pixels table: all 254 pixels (1-127 upper, 1001-1127 lower)
-with their quasi-static preamp/FET wiring from data/pixel_wiring.csv.
+with their quasi-static preamp/FET wiring from data/pixel_wiring.csv
+(hand-transcribed from the collaboration's pixel preamp/FET map figures,
+kept in data/provenance/).
 
 Idempotent: re-running updates wiring in place (e.g. after a remap is
-edited into the CSV).
+edited into the CSV). In practice this is a run-once seed — the wiring
+is quasi-static.
 """
 
 from calibrationnet.db import get_session

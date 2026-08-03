@@ -102,8 +102,12 @@ def main() -> None:
     print(f"filtered {total} waveforms over {len(per_pixel)} pixels "
           f"in {time.perf_counter() - started:.0f}s")
 
-    # 4. Store, then ingest, then drop the intermediate file.
-    csv_path = (args.out / f"Run{args.run}" /
+    # 4. Store, then ingest, then drop the intermediate file. The CSV
+    # sits FLAT in the staging directory (no per-run subfolder — it is
+    # deleted after a successful ingest; it only survives, name fully
+    # self-describing, when the ingest fails and needs a rescue via
+    # scripts/ingest_filter_output.py).
+    csv_path = (args.out /
                 f"Run{args.run}_seg{args.segment}_{args.wave}"
                 f"_filter_output_rt{args.risetime}_ft{args.flattop}"
                 f"_fall{args.falltime}.csv")

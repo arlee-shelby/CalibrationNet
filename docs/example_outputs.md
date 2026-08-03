@@ -36,6 +36,22 @@ residual panel in keV. This pixel has 7 points, not 8: its garbage
 "CE 566" peak was refused at extraction (two-anchor validation), so the
 calibration never saw it.
 
+## Hit map (scripts/show_hitmap.py)
+
+![run 8622 upper-detector hit map](examples/hitmap_run8622_upper.png)
+
+```bash
+python scripts/show_hitmap.py 8622 --det upper
+```
+
+Waveform counts per pixel for one run segment, straight from the stored
+trap filter outputs (array lengths only — no energy arrays are pulled),
+drawn in the collaboration's standard style (cividis, mirrored lower
+detector, color scale capped at the 93rd percentile so the hottest
+source pixels don't crush the rest). This is the view used to verify
+source positions by eye — the anchor identifications in
+calibrationnet/positions.py came from maps like this one.
+
 ## Position plan coverage map (scripts/optimal_positions.py)
 
 ![position plan coverage, upper detector](examples/position_plan_coverage.png)

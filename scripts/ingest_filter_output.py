@@ -17,7 +17,7 @@ scan.
     # a CSV left behind by an apply_trap_filter.py task whose ingest step
     # failed (run and segment are parsed from the name):
     python scripts/ingest_filter_output.py \\
-        data/TrapFilterData/Run9371/Run9371_seg7_singles_filter_output_rt1250_ft50_fall1250.csv \\
+        data/TrapFilterData/Run9371_seg7_singles_filter_output_rt1250_ft50_fall1250.csv \\
         --label nabpy-standard
 """
 
