@@ -70,7 +70,8 @@ from calibrationnet.pipeline.source_assignment import (
     slot_offsets,
 )
 
-OUT_TEMPLATE = "optimal_positions_plan_{holder}_{convention}"
+# Plans are deliverables: they land in plans/ (created on demand).
+OUT_TEMPLATE = "plans/optimal_positions_plan_{holder}_{convention}"
 MM_PER_HEX = 5.2  # pixel center-to-corner is 5.2 mm = 1 geometry unit
 
 
@@ -551,6 +552,8 @@ def main() -> None:
             if parts:
                 report(f"      {det}: " + "  ".join(parts))
 
+    import os
+    os.makedirs("plans", exist_ok=True)
     stem = OUT_TEMPLATE.format(holder=holder, convention=convention)
     if args.tag:
         stem += f"_{args.tag}"

@@ -37,7 +37,11 @@ class Calibration(CovarianceMixin, Base):
     the coefficients get dedicated columns (small, fixed set, directly
     queryable), `var_names` + `covariance` carry the full uncertainty
     structure, and correlations are derived on demand by correlations()
-    (from CovarianceMixin), never stored. See docs/fit_storage.md.
+    (from CovarianceMixin), never stored. CONVENTION: every fit stored
+    in this database uses lmfit with scale_covar=False — raw
+    chi-square-weighted uncertainties, never rescaled by reduced chi2
+    (lmfit's default WOULD rescale); whether and when to scale is
+    always the analyst's later decision. See docs/fit_storage.md.
     """
 
     __tablename__ = "calibrations"
@@ -64,6 +68,8 @@ class Calibration(CovarianceMixin, Base):
     calibration_type: Mapped[str] = mapped_column(String(20))  # "linear" | "quadratic"
 
     # The fitted coefficients: keV = constant + linear*ADC (+ quadratic*ADC^2).
+    # UNITS: constant in keV; linear (the gain) in keV/ADC; quadratic in
+    # keV/ADC^2. Errors share their coefficient's units.
     constant_term: Mapped[Optional[float]]
     constant_error: Mapped[Optional[float]]
     linear_term: Mapped[Optional[float]]

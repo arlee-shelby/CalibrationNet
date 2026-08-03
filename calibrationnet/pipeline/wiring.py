@@ -1,7 +1,8 @@
 """The current pixel -> preamp/FET wiring maps, from data/pixel_wiring.csv.
 
 Transcribed from the "Pixel Prioritized Preamp Map" and "Pixel Prioritized
-FET Map" figures (pixel_preamp_map.png / pixel_fet_map.png in the repo
+FET Map" figures (pixel_preamp_map.png / pixel_fet_map.png in
+data/provenance/ of the repo
 root). The CSV covers pixels 1-127; the lower detector (1001-1127) uses
 the identical mapping, so the loader mirrors it — pixel N+1000 gets the
 same labels as pixel N (each detector has its own electronics; labels are

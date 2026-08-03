@@ -5,6 +5,32 @@ filter output's spectrum) and **calibrations** (ADC→keV fits) — and both
 follow the same storage pattern. This page explains the pattern once,
 with a worked example using real numbers from run 8622, pixel 60.
 
+## Uncertainty convention: `scale_covar=False`, always
+
+**Every fit stored in this database runs lmfit with
+`scale_covar=False`.** This is NOT lmfit's default: by default lmfit
+multiplies the covariance matrix (and therefore every stderr) by the
+reduced chi-square, silently "fixing" over/under-dispersed fits. We
+never store rescaled uncertainties — what goes in the database is the
+raw weighted-least-squares covariance, so whether, when, and how to
+scale is always the analyst's decision at analysis time, never baked in
+at storage time. (Rescaling after the fact is trivial: multiply the
+covariance by `reduced_chi2` — both are stored; undoing a baked-in
+rescale would require re-fitting.)
+
+This applies to the spectrum fits (`do_fit` in
+calibrationnet/fit_functions.py — one of the frozen physics functions)
+and to the calibration fits (scripts/calibrate.py). Any future fit that
+writes to this database must follow the same convention.
+
+## Units
+
+Calibration coefficients: keV = constant + linear·ADC (+ quadratic·ADC²)
+— **constant in keV, linear (the gain) in keV/ADC, quadratic in
+keV/ADC²**; each error shares its coefficient's units. Spectrum-fit
+centroids/sigmas are in ADC histogram bins; kev_peaks energies in keV;
+decay-line intensities in percent.
+
 ## The pattern
 
 | kind | where | examples |

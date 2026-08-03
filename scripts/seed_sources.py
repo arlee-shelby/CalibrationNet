@@ -1,5 +1,5 @@
 """Seed isotopes and physical sources from the current sources spreadsheet
-("Current CAL2702 Sources.xlsx": Source ID like "Bi-207-9176", Serial
+(data/"Current CAL2702 Sources.xlsx": Source ID like "Bi-207-9176", Serial
 number like "Y2-743"). Idempotent: existing sources are matched by label
 and their serial updated if it changed.
 """
@@ -11,7 +11,7 @@ import pandas as pd
 from calibrationnet.db import get_session
 from calibrationnet.models import Isotope, Source
 
-DEFAULT_XLSX = "Current CAL2702 Sources.xlsx"
+DEFAULT_XLSX = "data/Current CAL2702 Sources.xlsx"
 
 
 def main() -> None:

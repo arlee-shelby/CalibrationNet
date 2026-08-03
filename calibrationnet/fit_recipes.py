@@ -20,3 +20,30 @@ RECIPES = {
              widths={"sig1": 3, "sig2": 3, "sig3": 5}),
     ],
 }
+
+# Gain scout: where the isotope's strongest line sits at NOMINAL gain,
+# so a pixel's actual gain ratio can be estimated from its histogram
+# before fitting and the recipe windows scaled to match (low-gain pixels
+# like UDET 95/96 in the 2025 data have their whole spectrum compressed
+# to lower ADC). search_from excludes the threshold/noise region. The
+# scout only changes get_fit's INPUTS — the fit code itself never sees
+# any of this.
+SCOUT_ANCHORS = {
+    "Bi-207": {"nominal_adc": 2885, "search_from": 400},  # CE 976 K line
+}
+
+# Retry ladder for the peak finder when a fit fails outright (find_peaks
+# returning fewer peaks than the recipe needs): progressively gentler
+# prominence (index 3) and, last, height (index 0). The recipe's own
+# settings are always attempt 1, so healthy pixels are fitted exactly
+# as before; whatever attempt succeeds is recorded in the fit's config.
+def peak_finder_ladder(peak_finder):
+    yield peak_finder, "recipe"
+    for prominence in (10, 7, 5):
+        variant = list(peak_finder)
+        variant[3] = prominence
+        note = f"prominence={prominence}"
+        if prominence == 5:
+            variant[0] = 3
+            note += ",height=3"
+        yield tuple(variant), note

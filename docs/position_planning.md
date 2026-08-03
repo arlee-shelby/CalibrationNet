@@ -115,7 +115,8 @@ the range automatically.
 
 ## Outputs
 
-All named `optimal_positions_plan_<holder>_<convention>*`:
+All written into `plans/`, named
+`optimal_positions_plan_<holder>_<convention>*` (plus any `--tag`):
 
 | file | contents |
 |---|---|

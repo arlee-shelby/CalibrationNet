@@ -2,12 +2,12 @@
 one small CSV — run this ON THE CLUSTER where the h5 files live, then
 ingest the CSV locally with:
 
-    python scripts/ingest_board_channels.py --csv bc_maps.csv
+    python scripts/ingest_board_channels.py --csv data/bc_maps.csv
 
 Needs only h5py (pip install h5py). The map doesn't change within a run,
 so one subrun file per run suffices (the lowest-numbered one found).
 
-    python scripts/extract_bc_maps.py /path/to/h5/files -o bc_maps.csv
+    python scripts/extract_bc_maps.py /path/to/h5/files -o data/bc_maps.csv
 """
 
 import argparse
@@ -24,7 +24,7 @@ DATASET = "Parameters/BoardChannelToPixelMap"
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("h5_dir", type=Path)
-    parser.add_argument("-o", "--out", default="bc_maps.csv")
+    parser.add_argument("-o", "--out", default="data/bc_maps.csv")
     args = parser.parse_args()
 
     by_run = defaultdict(list)  # run -> [(subrun, path)]

@@ -4,6 +4,14 @@ Postgres database (SQLAlchemy 2.0 ORM + Alembic migrations) for detector
 energy calibrations: runs, pixels, trap filter passes over the raw
 waveforms, fitted source peaks, and the calibrations derived from them.
 
+Repository layout — which directory holds what, and which script
+produces which files/plots — is mapped in
+[docs/repo_layout.md](docs/repo_layout.md); example output figures with
+captions are in [docs/example_outputs.md](docs/example_outputs.md).
+Development-era material (uploaded reference files, exploration
+notebooks, superseded outputs) lives under
+[development/](development/), never at the repo root.
+
 ## Schema
 
 The analysis chain for one pixel during one period of constant source
@@ -77,10 +85,12 @@ runs ──< run_segments ──< run_pixels >── pixels
 - **isotopes** — a calibration isotope (e.g. 207Bi, 113Sn).
 - **sources** — a specific physical source: its isotope, label
   (e.g. "Bi-207-9176"), and serial number (e.g. "Y2-743", from
-  data/sources.xlsx via scripts/seed_sources.py). Many sources of the
+  "data/Current CAL2702 Sources.xlsx" via scripts/seed_sources.py).
+  Many sources of the
   same isotope can exist, and runs record which one sat over which pixel.
 - **source_installations** — the source frame's installation history
-  (from the Source Installation History slides, seeded from
+  (from the Source Installation History slides — the PDF and the
+  corrected 7/21 figure live in data/provenance/ — seeded from
   data/source_installations.csv): which source sat in which frame slot
   from installed_on until removed_on (NULL = still installed). A run's
   active installation is selected by its start_time. Slot labels follow
@@ -231,7 +241,18 @@ stage was moving belong to no segment and are simply never filtered.
 python scripts/fit_spectra.py --run 8622 --pixels 60
 python scripts/fit_spectra.py --run 9327                 # every fitted pixel
 python scripts/fit_spectra.py --run 8622 --pixels 60 --plot fit_plots/
+
+# or the whole pipeline for a run in one command (each stage idempotent;
+# needs the slow-controls tunnel for the ingest stage):
+./scripts/with_sc_tunnel.sh python scripts/process_run.py 9402 \
+    --h5-dir /path/to/h5/ --min-dwell 3
 ```
+
+[scripts/process_run.py](scripts/process_run.py) chains every stage —
+ingest, trap filter (submits the SLURM array when on the cluster and
+outputs are missing, then asks to be re-run), source assignment
+(auto-applies non-CHECK rows), fits, peak extraction, calibrations —
+per segment, skipping whatever is already done.
 
 [scripts/fit_spectra.py](scripts/fit_spectra.py) pulls a run pixel's trap
 filter output, fits its peaks with the developed physics code

@@ -115,10 +115,16 @@ verified. Calibrations carry trap_filter_output_id (the ADC scale is a
 property of the trap setting — migration 571a40f12016). First physics
 from the chain: the linear terms (0.328–0.338 keV/ADC) match the
 extraction anchor gains; the constant term sits near +29 keV on healthy
-pixels; and including the Auger points raises reduced chi2 to ~6–9.5
-(CE-only: 1.3) with the quadratic term NOT absorbing the deviation —
-the low-energy departure from linearity is threshold-shaped, a physics
-decision (CE-only calibrations vs a low-energy treatment) left open.
+pixels — expected to encode CE energy-loss/threshold physics and to
+improve with source-specific corrected keV values; per AS the metric
+that matters for the precision goals is the constant term's
+UNCERTAINTY, not its size. Including the Auger points raises reduced
+chi2 to ~6–9.5 (CE-only: 1.3) with the quadratic term NOT absorbing the
+deviation. Whether that is a statistics effect or a real reason to keep
+Augers out of calibrations until keV corrections arrive should be
+decided by comparing the same pixels in a much longer dwell (e.g.
+8622's ~30 min vs a multi-hour parked segment) — deferred. Units and
+the scale_covar=False convention: docs/fit_storage.md.
 Original design:
 
 - Per run pixel: gather matched adc_peaks across its current fits, pair
@@ -135,24 +141,48 @@ Original design:
   (is_current moves). Different fit-combination calibrations coexist as
   separate, fully documented rows.
 
-## Phase 4 — fit-routine flexibility (changeable functions only)
+## Phase 4 — fit-routine flexibility — v1 DONE 2026-08-03
 
-All benchmarked against phase 0 before adoption:
+Implemented entirely at the SCRIPT level (fit_spectra.py +
+fit_recipes.py): the scout and ladder vary only get_fit's INPUTS
+(windows, peak-finder settings, width guesses), so fit_functions.py is
+untouched and the phase-0 benchmark stays identically green.
 
-- **Gain scout**: before fitting, find the strongest peak in the full
-  0–4500 histogram, ratio to its nominal position, scale the recipe
-  windows — fixes fixed-window failures on low-gain pixels (test case:
-  run 8718, UDET pixel 95).
-- **Initial parameters**: keep the find_peaks scheme as the base — it
-  is the proven core. Make its inputs adaptive (prominence relative to
-  histogram scale, distances relative to estimated gain) rather than
-  replacing the method.
-- **Retry ladder**: when a fit fails or trips the error flags, retry
-  with a small bounded set of variations (window nudge, width rescale),
-  recording whatever produced the accepted fit in `config` so it is
-  reproducible.
-- Possibly restructure `get_fit` into composable steps (histogram /
-  window / init / fit) with identical numerics.
+- **Gain scout** (`SCOUT_ANCHORS`): locate the strongest peak above the
+  threshold region, ratio to its nominal ADC (Bi-207: CE 976 at 2885),
+  scale the recipe windows, the peak-finder distance, and the width
+  guesses together. Within 5% of nominal the recipe is used exactly.
+  If the scaled attempt fails outright, one fallback at nominal windows
+  guarantees the scout can only ADD successes (added after skirt pixels
+  1021/1031 briefly regressed from misfired scouts).
+- **Retry ladder** (`peak_finder_ladder`): recipe settings first, then
+  progressively gentler prominence (15 -> 10 -> 7 -> 5, finally with
+  height 3). Whatever attempt succeeded is recorded in the fit's
+  `config` (scout_ratio + attempt), so every fit stays reproducible.
+- Measured on run 8622: 11 pixels that always failed now fit (24
+  pixels with stored fits vs 15 baseline).
+- **Low-gain pixels** (run 8718 UDET 95, gain 0.443x nominal): the
+  scout finds them correctly and the CE structure is visible, but at
+  that gain the 554/566 and 1048/1060 pairs compress to ~16 ADC and
+  partially merge — a 6-distinct-peak model is wrong there. These
+  pixels wait for the BLEND recipes (constrained pair fits), the
+  remaining phase-4 item, deliberately deferred by AS until after the
+  pipeline build.
+
+Still open in phase 4: blend recipes (strategies A/B/C above), and
+possibly restructuring `get_fit` into composable steps (benchmarked).
+
+**Known issue (2026-08-03):** source assignment pools segments per
+(holder, convention) — it already keys on the installation (holder),
+but NOT on the magnet field. Field epochs on record so far: fall 2025 =
+5-slot tray at 137 A (runs 8622–8865, incl. 8718); July 2026 scans =
+6-slot at 110 A (9326–9378); run 9402 = 6-slot back at 137 A. So the
+inches-2026 pool now mixes 110 A and 137 A segments in one set of
+baselines and one trend — the same field-mixing the position planner
+solved with --runs. Assignment needs (holder, convention, field)
+separation before global re-assignment (scripts/assign_sources.py,
+also run by process_run.py) becomes routine; until then, review the
+assignment CSV after processing runs at a new field setting.
 
 ## Resolved questions (2026-07-31)
 

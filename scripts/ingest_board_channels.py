@@ -3,8 +3,8 @@
 Either directly from one run's HDF5 file (any subrun works), or in bulk
 from the CSV that scripts/extract_bc_maps.py produces on the cluster:
 
-    python scripts/ingest_board_channels.py 8622 Run8622_0.h5
-    python scripts/ingest_board_channels.py --csv bc_maps.csv
+    python scripts/ingest_board_channels.py 8622 development/inputs/Run8622_0.h5
+    python scripts/ingest_board_channels.py --csv data/bc_maps.csv
 """
 
 import argparse
@@ -26,7 +26,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_number", type=int, nargs="?")
     parser.add_argument("h5_file", nargs="?")
-    parser.add_argument("--csv", help="bc_maps.csv from extract_bc_maps.py")
+    parser.add_argument("--csv", help="data/bc_maps.csv from extract_bc_maps.py")
     args = parser.parse_args()
 
     if args.csv:

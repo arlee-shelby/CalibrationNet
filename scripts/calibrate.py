@@ -12,11 +12,14 @@ of the trap setting, so points from different outputs never mix):
 3. Require at least --min-points points (default 3 — two or fewer of
    eight is never enough). Peaks without a centroid error are excluded:
    they cannot be weighted.
-4. Weighted least squares (lmfit, scale_covar=False like the spectrum
-   fits): keV = constant + linear*ADC (+ quadratic*ADC^2), with
-   sigma_i = sqrt((gain*centroid_err_i)^2 + kev_err_i^2), gain refined
-   once from the first pass. The quadratic fit needs >= 4 points (one
-   degree of freedom).
+4. Weighted least squares: keV = constant + linear*ADC (+ quadratic*
+   ADC^2) — UNITS: constant in keV, linear in keV/ADC, quadratic in
+   keV/ADC^2 — with sigma_i = sqrt((gain*centroid_err_i)^2 +
+   kev_err_i^2), gain refined once from the first pass. The quadratic
+   fit needs >= 4 points (one degree of freedom). CONVENTION: lmfit
+   with scale_covar=False, like every fit in this database — stored
+   uncertainties are never rescaled by reduced chi2 (lmfit's default
+   WOULD rescale); scaling is always the analyst's later decision.
 5. Store one Calibration row per type with coefficients +- errors,
    chi2/ndf/reduced chi2, success, var_names + covariance (correlations
    derive on demand — docs/fit_storage.md), config, and one
@@ -32,6 +35,7 @@ type, label); use a different --label to keep alternatives side by side.
 """
 
 import argparse
+from pathlib import Path
 
 from lmfit import Minimizer, Parameters
 from sqlalchemy import select
@@ -78,9 +82,59 @@ def fit_calibration(points, quadratic: bool):
                 model = model + p["quadratic"] * adc * adc
             return (model - kev) / sigma
 
+        # scale_covar=False is the database-wide convention: store raw
+        # weighted uncertainties, never redchi-rescaled (lmfit default).
         result = Minimizer(residual, params, scale_covar=False).minimize()
         gain = result.params["linear"].value
     return result
+
+
+def plot_calibration(points, results, rp, label, out_dir):
+    """QA figure: points with error bars, both fit curves, and per-type
+    residuals in keV."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    adc = np.array([p[0] for p in points])
+    kev = np.array([p[2] for p in points])
+    gain0 = next(iter(results.values())).params["linear"].value
+    yerr = np.sqrt((gain0 * np.array([p[1] for p in points])) ** 2
+                   + np.array([p[3] or 0.0 for p in points]) ** 2)
+    grid = np.linspace(adc.min() * 0.9, adc.max() * 1.05, 200)
+
+    fig, (top, bottom) = plt.subplots(
+        2, 1, figsize=(8, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1]}, constrained_layout=True)
+    top.errorbar(adc, kev, yerr=yerr, fmt="o", ms=4, capsize=2,
+                 label="matched peaks")
+    for cal_type, result in results.items():
+        p = result.params
+
+        def model(x, p=p):
+            y = p["constant"].value + p["linear"].value * x
+            if "quadratic" in p:
+                y = y + p["quadratic"].value * x * x
+            return y
+
+        top.plot(grid, model(grid),
+                 label=f"{cal_type} (reduced $\\chi^2$="
+                       f"{result.redchi:.2f})")
+        bottom.errorbar(adc, model(adc) - kev, yerr=yerr, fmt="o", ms=4,
+                        capsize=2, label=cal_type)
+    bottom.axhline(0, color="grey", lw=0.8)
+    top.set_ylabel("energy (keV)")
+    bottom.set_ylabel("fit - known (keV)")
+    bottom.set_xlabel("centroid (ADC)")
+    top.legend()
+    bottom.legend(fontsize=8)
+    top.set_title(f"Run {rp.run_number} seg {rp.segment_index} "
+                  f"pixel {rp.pixel_number} — calibration '{label}'")
+    out = out_dir / (f"Run{rp.run_number}_seg{rp.segment_index}"
+                     f"_pix{rp.pixel_number}_{label}_calibration.png")
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
 
 
 def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
@@ -143,7 +197,12 @@ def main() -> None:
                              "calibration (default 3)")
     parser.add_argument("--no-current", action="store_true",
                         help="store without blessing as is_current")
+    parser.add_argument("--plot", type=Path, default=None, metavar="DIR",
+                        help="save a QA figure (points, fits, residuals) "
+                             "per pixel into this directory")
     args = parser.parse_args()
+    if args.plot is not None:
+        args.plot.mkdir(parents=True, exist_ok=True)
 
     made = skipped = 0
     with get_session() as session:
@@ -193,6 +252,7 @@ def main() -> None:
 
             lines = ", ".join(p.isotope_decay_energy.label for p, _ in pairs)
             print(f"pixel {rp.pixel_number}: {len(points)} points ({lines})")
+            results = {}
             for cal_type in ("linear", "quadratic"):
                 quadratic = cal_type == "quadratic"
                 if len(points) < (4 if quadratic else 3):
@@ -200,6 +260,7 @@ def main() -> None:
                           f"{4 if quadratic else 3} points for ndf >= 1)")
                     continue
                 result = fit_calibration(points, quadratic)
+                results[cal_type] = result
                 store(session, rp, tfo, args.label, cal_type, result,
                       pairs, not args.no_current, args.min_points)
                 made += 1
@@ -213,6 +274,9 @@ def main() -> None:
                       f"*ADC{quad}  "
                       f"(reduced_chi2={result.redchi:.2f}, "
                       f"ndf={result.nfree}, success={result.success})")
+            if args.plot is not None and results:
+                plot_calibration(points, results, rp, args.label,
+                                 args.plot)
             session.commit()  # per pixel
 
     print(f"\n{made} calibration(s) stored, {skipped} pixel(s) below "
