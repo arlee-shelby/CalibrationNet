@@ -105,7 +105,21 @@ Start with A; B/C become recipe options once the fit-routine
 flexibility work (phase 4) exists — they only touch the changeable
 functions (parameter setup), not the frozen model.
 
-## Phase 3 — calibration builder (`scripts/calibrate.py`)
+## Phase 3 — calibration builder — DONE 2026-08-03
+
+`scripts/calibrate.py`, validated end to end on run 8622 pixels
+60/67/80/1051 (7 calibrations): replace semantics, freeze semantics
+(re-extraction of calibrated peaks refused gracefully), is_current
+uniqueness, and full read-back through calibrationnet/queries.py all
+verified. Calibrations carry trap_filter_output_id (the ADC scale is a
+property of the trap setting — migration 571a40f12016). First physics
+from the chain: the linear terms (0.328–0.338 keV/ADC) match the
+extraction anchor gains; the constant term sits near +29 keV on healthy
+pixels; and including the Auger points raises reduced chi2 to ~6–9.5
+(CE-only: 1.3) with the quadratic term NOT absorbing the deviation —
+the low-energy departure from linearity is threshold-shaped, a physics
+decision (CE-only calibrations vs a low-energy treatment) left open.
+Original design:
 
 - Per run pixel: gather matched adc_peaks across its current fits, pair
   with the chosen keV values (default: latest generic NNDC row; a

@@ -23,7 +23,8 @@ For each run pixel with stored fits (scripts/fit_spectra.py):
 Writes one adc_peaks row per fitted peak (centroid/sigma/amplitude with
 errors, matched isotope_decay_energy or NULL). Re-running REPLACES a
 fit's peaks — unless a calibration already references them, in which
-case the database refuses (the freeze semantics of docs/fit_storage.md).
+case the pixel is refused (the freeze semantics of docs/fit_storage.md):
+delete or rebuild the calibration (scripts/calibrate.py) to proceed.
 
 Unresolved blends (Cd-109 87/88, Ce-139 164/166) are NOT handled yet —
 this matcher requires one fitted peak per line, which holds for the
@@ -71,6 +72,50 @@ def fitted_peaks(fit: SpectrumFit) -> list:
     return sorted(peaks, key=lambda p: p["centroid"])
 
 
+def extract_fits(session, fits, groups, implied, tolerance_kev) -> tuple:
+    """Match and stage one pixel's fits. Returns (stored, flagged).
+    May raise IntegrityError at flush when an existing calibration
+    freezes the peaks being replaced."""
+    stored = flagged = 0
+    for fit in fits:
+        prefix = LINE_GROUPS.get((fit.label or "").split("-")[0])
+        group = groups.get(prefix, [])
+        peaks = fitted_peaks(fit)
+        if len(peaks) != len(group):
+            print(f"  {fit.label}: skipped ({len(peaks)} peaks vs "
+                  f"{len(group)} {prefix} lines — blend/partial "
+                  "matching not implemented yet)")
+            continue
+        # Replace this fit's peaks (refused by the database if a
+        # calibration already uses them — supersede it first).
+        for old in session.scalars(
+                select(ADCPeak)
+                .where(ADCPeak.spectrum_fit_id == fit.id)):
+            session.delete(old)
+        for peak, (line, energy) in zip(peaks, group):
+            resid = implied(peak["centroid"]) - energy
+            matched = abs(resid) <= tolerance_kev
+            session.add(ADCPeak(
+                spectrum_fit=fit,
+                isotope_decay_energy=line if matched else None,
+                centroid_adc=peak["centroid"],
+                centroid_error_adc=peak["centroid_err"],
+                sigma_adc=peak["sigma"],
+                sigma_error_adc=peak["sigma_err"],
+                amplitude=peak["amplitude"],
+                amplitude_error=peak["amplitude_err"],
+            ))
+            stored += 1
+            flag = ""
+            if not matched:
+                flagged += 1
+                flag = "  <-- NOT MATCHED (stored with no line)"
+            print(f"  {fit.label}: {peak['centroid']:8.1f} ADC -> "
+                  f"{line.label:>9} ({energy:.3f} keV, residual "
+                  f"{resid:+.2f} keV){flag}")
+    return stored, flagged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -111,10 +156,9 @@ def main() -> None:
             if isotope is None:
                 print(f"pixel {rp.pixel_number}: skipped (no source)")
                 continue
-            lines = [(line, nndc_energy(line))
-                     for line in isotope.decay_energies]
             groups = {}
-            for line, energy in lines:
+            for line in isotope.decay_energies:
+                energy = nndc_energy(line)
                 if energy is None:
                     continue
                 for prefix in LINE_GROUPS.values():
@@ -140,7 +184,7 @@ def main() -> None:
             adc_hi, kev_hi = ce_peaks[anchor_hi]["centroid"], ce_lines[anchor_hi][1]
             slope = (kev_hi - kev_lo) / (adc_hi - adc_lo)
 
-            def implied(adc):
+            def implied(adc, kev_lo=kev_lo, adc_lo=adc_lo, slope=slope):
                 return kev_lo + slope * (adc - adc_lo)
 
             strongest = max(range(len(ce_peaks)),
@@ -152,51 +196,18 @@ def main() -> None:
                       f"not the highest-intensity line "
                       f"{ce_lines[anchor_hi][0].label} — check this pixel")
 
-            for fit in fits:
-                prefix = LINE_GROUPS.get((fit.label or "").split("-")[0])
-                group = groups.get(prefix, [])
-                peaks = fitted_peaks(fit)
-                if len(peaks) != len(group):
-                    print(f"  {fit.label}: skipped ({len(peaks)} peaks vs "
-                          f"{len(group)} {prefix} lines — blend/partial "
-                          "matching not implemented yet)")
-                    continue
-                # Replace this fit's peaks (refused by FKs if a
-                # calibration already uses them — supersede it first).
-                for old in session.scalars(
-                        select(ADCPeak)
-                        .where(ADCPeak.spectrum_fit_id == fit.id)):
-                    session.delete(old)
-                for peak, (line, energy) in zip(peaks, group):
-                    resid = implied(peak["centroid"]) - energy
-                    matched = abs(resid) <= args.tolerance_kev
-                    session.add(ADCPeak(
-                        spectrum_fit=fit,
-                        isotope_decay_energy=line if matched else None,
-                        centroid_adc=peak["centroid"],
-                        centroid_error_adc=peak["centroid_err"],
-                        sigma_adc=peak["sigma"],
-                        sigma_error_adc=peak["sigma_err"],
-                        amplitude=peak["amplitude"],
-                        amplitude_error=peak["amplitude_err"],
-                    ))
-                    stored += 1
-                    flag = ""
-                    if not matched:
-                        flagged += 1
-                        flag = "  <-- NOT MATCHED (stored with no line)"
-                    print(f"  {fit.label}: {peak['centroid']:8.1f} ADC -> "
-                          f"{line.label:>9} ({energy:.3f} keV, residual "
-                          f"{resid:+.2f} keV){flag}")
             try:
+                n_stored, n_flagged = extract_fits(
+                    session, fits, groups, implied, args.tolerance_kev)
                 session.commit()  # per pixel
+                stored += n_stored
+                flagged += n_flagged
             except IntegrityError:
                 session.rollback()
                 print(f"  pixel {rp.pixel_number}: REFUSED — its peaks "
-                      "are referenced by a calibration (frozen). "
-                      "Re-run scripts/calibrate.py afterwards to rebuild "
-                      "the calibration from fresh peaks, or delete it "
-                      "first if it should not survive.")
+                      "are referenced by a calibration (frozen). Delete "
+                      "or rebuild that calibration (scripts/calibrate.py) "
+                      "to re-extract.")
 
     print(f"\n{stored} adc_peaks stored, {flagged} left unmatched")
 

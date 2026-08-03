@@ -254,6 +254,17 @@ two-anchor energy line (lowest-energy + highest-intensity CE line) must
 confirm every match within `--tolerance-kev` — implausible peaks are
 stored with no line and flagged, so bad fits can't feed a calibration.
 
+Finally, [scripts/calibrate.py](scripts/calibrate.py) turns each run
+pixel's matched peaks into stored ADC→keV calibrations: one linear and
+one quadratic Calibration per trap filter output (never mixing outputs —
+the ADC scale is a property of the trap setting), pairing each adc_peak
+with its keV row (source-bound simulation values when seeded, else
+newest generic NNDC — the exact row is recorded per point). At least 3
+matched points are required (4 for quadratic); the newest calibration
+becomes `is_current` per (run_pixel, type) unless `--no-current`.
+Re-running replaces the same-labelled calibration; peaks referenced by a
+calibration are frozen against re-extraction until it is rebuilt.
+
 The fit code is under a strict change policy
 ([docs/pipeline_roadmap.md](docs/pipeline_roadmap.md)): the physics
 functions are frozen, and any change to the changeable ones must pass
