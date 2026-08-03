@@ -169,8 +169,18 @@ untouched and the phase-0 benchmark stays identically green.
   remaining phase-4 item, deliberately deferred by AS until after the
   pipeline build.
 
-Still open in phase 4: blend recipes (strategies A/B/C above), and
-possibly restructuring `get_fit` into composable steps (benchmarked).
+Still open in phase 4: **prediction-seeded initialization** (v2) — the
+model itself fits weak or unresolved peaks fine; what fails is
+find_peaks needing distinct maxima ('amp1' failures, and 8718 pixel
+99's visible-but-weak 566 line drifting to a wide background hump).
+Verified 2026-08-04: hand-seeding peak 3 at the two-anchor predicted
+position (frozen model + do_fit, no code changes) locked it onto the
+real line (implied 568.0 keV vs 565.85) — but naive seeding left a
+degenerate covariance, so the real initializer needs careful design
+(background init, bounds) and the benchmark gate. The same pathway is
+the blend strategy (Cd 87/88, short-trap merges) and the low-gain
+completion. Also open: restructuring `get_fit` into composable steps
+(benchmarked).
 
 **RESOLVED (2026-08-04):** source assignment and position planning now
 pool per (holder, convention, FIELD) — field_key(run) captures magnet

@@ -108,7 +108,7 @@ def plot_calibration(points, results, rp, label, out_dir):
         2, 1, figsize=(8, 7), sharex=True,
         gridspec_kw={"height_ratios": [3, 1]}, constrained_layout=True)
     top.errorbar(adc, kev, yerr=yerr, fmt="o", ms=4, capsize=2,
-                 label="matched peaks")
+                 alpha=0.75, label="matched peaks")
     for cal_type, result in results.items():
         p = result.params
 
@@ -118,15 +118,15 @@ def plot_calibration(points, results, rp, label, out_dir):
                 y = y + p["quadratic"].value * x * x
             return y
 
-        top.plot(grid, model(grid),
+        top.plot(grid, model(grid), alpha=0.75,
                  label=f"{cal_type} (reduced $\\chi^2$="
                        f"{result.redchi:.2f})")
         bottom.errorbar(adc, model(adc) - kev, yerr=yerr, fmt="o", ms=4,
-                        capsize=2, label=cal_type)
+                        capsize=2, alpha=0.75, label=cal_type)
     bottom.axhline(0, color="grey", lw=0.8)
-    top.set_ylabel("energy (keV)")
-    bottom.set_ylabel("fit - known (keV)")
-    bottom.set_xlabel("centroid (ADC)")
+    top.set_ylabel("Energy (keV)")
+    bottom.set_ylabel("Residual (keV)")
+    bottom.set_xlabel("Centroid (ADC)")
     top.legend()
     bottom.legend(fontsize=8)
     top.set_title(f"Run {rp.run_number} seg {rp.segment_index} "
