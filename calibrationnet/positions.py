@@ -147,6 +147,21 @@ def anchor_for(holder: str, convention: str) -> dict:
     return anchor
 
 
+def horizontal_limit(convention: str, linear: float):
+    """(lo, hi) horizontal travel allowed at this linear readback, or
+    None when no limit is recorded for the convention.
+
+    inches-2026 (from operations, 2026-08-01): between linear 32.39 and
+    34.09 inches the horizontal motion limits are +/-0.5 inch; beyond
+    that band the stage should stay within +/-0.25 inch (operational
+    preference, treated as a hard limit here). The scanned readback
+    footprint is a cross for exactly this reason — position planning
+    must never propose the unscannable corners."""
+    if convention == INCHES_2026:
+        return (-0.5, 0.5) if 32.39 <= linear <= 34.09 else (-0.25, 0.25)
+    return None
+
+
 def convention_for_date(when: date) -> str:
     """Which position convention a run taken on this date reports in."""
     return INCHES_2026 if when >= INCHES_2026_START else LEGACY

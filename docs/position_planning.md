@@ -13,11 +13,16 @@ through, plus per-detector coverage maps.
    linear model per detector: hex-grid x, y as functions of the linear
    and horizontal readbacks). It improves automatically as more scanned
    segments are ingested — re-run it after every ingest.
-2. **Stay inside proven range.** The allowed readback range is exactly
-   the range the scan data actually used (e.g. horizontal 1.70–3.70 for
-   the 5-slot legacy scans). Anything outside is not *known* to be
-   reachable, so the plan never proposes it — see the what-if mode below
-   for exploring beyond it.
+2. **Stay inside proven range AND the hardware envelope.** The allowed
+   readback range starts from what the scan data actually used, then
+   removes everything outside the stage's recorded motion limits
+   (`calibrationnet/positions.py: horizontal_limit` — for inches-2026,
+   horizontal ±0.5 in only while linear is between 32.39 and 34.09,
+   ±0.25 in beyond that band). The scanned footprint is a cross, not a
+   rectangle, for exactly this reason; planning on the bounding
+   rectangle proposed corner positions the automation rejected
+   (run 9402 feedback, 2026-08-01). What-if mode is exempt but flags
+   assumptions that exceed the envelope.
 3. **Refine the tray geometry against the data.** The anchor run gives
    slot offsets by snapping each verified source to its pixel's CENTER,
    but a verified source can really sit up to ~4.5 mm off that center —

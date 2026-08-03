@@ -59,6 +59,7 @@ from calibrationnet.geometry import (
     ring_number,
 )
 from calibrationnet.models import Run, RunSegment, SourceInstallation
+from calibrationnet.positions import horizontal_limit
 from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
@@ -473,6 +474,30 @@ def main() -> None:
     lin_grid = np.arange(lin_lo, lin_hi + 1e-9, args.step)
     hor_grid = np.arange(hor_lo, hor_hi + 1e-9, args.step)
     lins, hors = (a.ravel() for a in np.meshgrid(lin_grid, hor_grid))
+
+    # The stage's real motion envelope is narrower than the bounding
+    # rectangle of scanned positions (the horizontal limit depends on
+    # linear — the scanned footprint is a cross, not a rectangle).
+    # Candidates outside the recorded envelope are removed so the plan
+    # never proposes a position the hardware refuses. What-if runs skip
+    # the mask (they are explicitly hypothetical) but say so.
+    keep = np.array([
+        (lim := horizontal_limit(convention, float(l))) is None
+        or lim[0] <= h <= lim[1]
+        for l, h in zip(lins, hors)
+    ])
+    if whatif:
+        if not keep.all():
+            report(f"  NOTE: the assumed range includes "
+                   f"{int((~keep).sum())} grid points outside the recorded "
+                   f"hardware envelope (positions.horizontal_limit) — "
+                   f"hypothetical only.")
+    elif not keep.all():
+        report(f"  hardware envelope applied: {int((~keep).sum())} grid "
+               f"candidates outside the horizontal motion limits removed "
+               f"(see calibrationnet/positions.py horizontal_limit)")
+        lins, hors = lins[keep], hors[keep]
+
     tol_hex = args.tolerance_mm / MM_PER_HEX
     boundary_hex = args.boundary_mm / MM_PER_HEX
 
