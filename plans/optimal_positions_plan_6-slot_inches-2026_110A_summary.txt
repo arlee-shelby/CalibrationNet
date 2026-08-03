@@ -1,4 +1,4 @@
-planning 6-slot under inches-2026 (109 scanned segments from runs [9326, 9327, 9367, 9368, 9369, 9370, 9371, 9377, 9378])
+planning 6-slot under inches-2026 at field 110/110A-exb0 (109 scanned segments from runs [9326, 9327, 9367, 9368, 9369, 9370, 9371, 9377, 9378])
   slot offsets refined against the scanned segments (total correction vs anchor, hex):
     upper: R1C1 (+0.00,+0.00,n=77)  R1C2 (-0.15,-0.13,n=100)  R1C3 (-0.14,+0.25,n=89)  R2C1 (+0.27,+0.66,n=78)  R2C2 (+0.46,+0.16,n=105)  R2C3 (+0.26,+0.66,n=87)
     lower: R1C1 (+0.00,+0.00,n=56)  R1C2 (+0.01,+0.26,n=83)  R1C3 (+0.90,+0.29,n=72)  R2C1 (+0.63,-0.17,n=92)  R2C2 (+1.12,+0.93,n=109)  R2C3 (+1.47,+0.52,n=97)
@@ -94,14 +94,14 @@ plan: 28 positions (well-centered <= 2.6 mm, covered <= 4.5 mm, grid step 0.05)
       upper: R1C2->107 (4.4mm)  R1C3->110 (3.9mm)  R2C2->62 (3.9mm)  R2C3->79 (1.1mm)
       lower: R1C2->1019 (3.6mm)  R1C3->1022 (4.5mm)  R2C1->1047 (2.3mm)  R2C2->1063 (1.9mm)
 
-wrote optimal_positions_plan_6-slot_inches-2026_110A.csv (251 rows) and optimal_positions_plan_6-slot_inches-2026_110A_positions.csv (28 positions)
+wrote plans/optimal_positions_plan_6-slot_inches-2026_110A.csv (251 rows) and plans/optimal_positions_plan_6-slot_inches-2026_110A_positions.csv (28 positions)
 coverage summary:
   upper: 71/91 pixels get a position (57 well-centered at <=2.6 mm, 14 at 2.6-4.5 mm)
     no position within 4.5 mm — best achievable offset shown: 9 (best 8.6mm), 10 (best 5.4mm), 13 (best 10.5mm), 14 (best 7.3mm), 18 (best 6.6mm), 22 (best 10.2mm), 31 (best 5.6mm), 32 (best 4.5mm), 42 (best 5.6mm), 53 (best 5.6mm), 86 (best 5.2mm), 96 (best 4.7mm), 106 (best 5.2mm), 114 (best 9.7mm), 115 (best 6.4mm), 118 (best 9.0mm), 119 (best 5.0mm)
     coverable but below --min-gain 3: 66,116-117
-    map: optimal_positions_plan_6-slot_inches-2026_110A_upper.png
+    map: plans/optimal_positions_plan_6-slot_inches-2026_110A_upper.png
   lower: 82/91 pixels get a position (58 well-centered at <=2.6 mm, 24 at 2.6-4.5 mm)
     no position within 4.5 mm — best achievable offset shown: 10 (best 4.9mm), 75 (best 5.1mm), 106 (best 9.5mm), 107 (best 4.6mm), 110 (best 6.6mm), 114 (best 5.8mm), 115 (best 9.2mm), 118 (best 6.7mm)
     coverable but below --min-gain 3: 14
-    map: optimal_positions_plan_6-slot_inches-2026_110A_lower.png
+    map: plans/optimal_positions_plan_6-slot_inches-2026_110A_lower.png
   WARNING: must-include pixel(s) not coverable anywhere in the allowed range: [31, 42, 53, 96, 114]

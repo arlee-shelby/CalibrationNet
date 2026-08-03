@@ -110,6 +110,25 @@ def find_clusters(counts: dict, detector: str, n_clusters: int) -> list:
 # --------------------------------------------------------------------------
 # Evidence: counts relative to each pixel's own baseline.
 
+def field_key(run) -> str:
+    """The run's field configuration as a compact pool key: magnet
+    currents and ExB voltage, rounded to setting precision. The
+    readback -> frame mapping depends on these (measured going
+    110 A/ExB 0 -> 137 A/ExB 2 kV: horizontal scale changed ~5% and the
+    upper-detector shear vanished), so trends and baselines must never
+    pool across field configurations."""
+    def fmt(value, ndigits=0):
+        if value is None:
+            return "?"
+        return f"{round(value, ndigits):g}"
+    # ExB bins at 100 V: residual readings of a few volts are "off"
+    # (run 9326 idled at ~10 V beside 9327's 0 V — same configuration),
+    # while the meaningful states differ by hundreds to thousands of
+    # volts (0 / -1500 / +2000 so far).
+    return (f"{fmt(run.main)}/{fmt(run.udet)}A"
+            f"-exb{fmt(run.exb, -2)}")
+
+
 def compute_baselines(counts: dict) -> dict:
     """{detector: {pixel(1-127): median count across segments}} — a pixel's
     intrinsic rate, including noise and gain artefacts. A source only
@@ -322,28 +341,35 @@ def installation_for(session, segment) -> tuple:
 
 
 def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
-                      holders: dict, offsets: dict) -> tuple:
+                      holders: dict, offsets: dict, fields: dict = None
+                      ) -> tuple:
     """Two-round frame location for every (segment key, detector).
 
     Round 1 locates each segment from its readback-based anchor prior;
     round 2 refits the readback -> frame-position trend across all
-    segments sharing a (holder, convention) and relocates with that
-    tighter, data-driven prior. Returns (frames, trends): frames keyed by
-    (segment key, detector), trends by (holder, convention)."""
+    segments sharing a pool spec and relocates with that tighter,
+    data-driven prior. The spec is (holder, convention) — plus the
+    field key when `fields` is given ({segment key: field_key(run)}),
+    because the mapping depends on the magnet/ExB configuration and
+    trends must never pool across field epochs. Returns (frames,
+    trends): frames keyed by (segment key, detector), trends by spec."""
+    def spec_of(k):
+        base = (holders[k], conventions[k])
+        return base + ((fields[k],) if fields is not None else ())
+
     keys = list(excesses)
     located = {}
     for k in keys:
         for det in ("upper", "lower"):
-            offset = offsets[(holders[k], conventions[k], det)]
+            offset = offsets[spec_of(k) + (det,)]
             prior = predict_prior(holders[k], conventions[k], det, offset,
                                   *key_positions[k])
             located[(k, det)] = locate_frame(
                 excesses[k][det], det, offset, prior)
 
     frames, trends = {}, {}
-    for spec in {(holders[k], conventions[k]) for k in keys}:
-        conv_keys = [k for k in keys
-                     if (holders[k], conventions[k]) == spec]
+    for spec in {spec_of(k) for k in keys}:
+        conv_keys = [k for k in keys if spec_of(k) == spec]
         by_det = {det: {k: located[(k, det)] for k in conv_keys}
                   for det in ("upper", "lower")}
         trend = fit_position_trend(by_det, key_positions)

@@ -64,6 +64,7 @@ from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
     fetch_all_counts,
+    field_key,
     installation_for,
     locate_all_frames,
     refine_slot_offsets,
@@ -354,30 +355,41 @@ def main() -> None:
             k: (segments[k].linear_position, segments[k].horizontal_position)
             for k in counts}
         conventions = {k: segments[k].position_convention for k in counts}
+        runs_by_number = {r.run_number: r for r in session.scalars(
+            select(Run).where(Run.run_number.in_(
+                {k[0] for k in counts})))}
+    fields = {k: field_key(runs_by_number[k[0]]) for k in counts}
 
     holders = {k: meta[k][1] for k in counts}
     slot_maps = {k: meta[k][0] for k in counts}
     keys = [k for k in sorted(counts)
             if None not in key_positions[k] and holders[k] is not None]
 
-    # Which (holder, convention) to plan for: the requested holder's spec
-    # with the most scanned segments.
+    # Which (holder, convention, field) pool to plan for: the requested
+    # holder's pool with the most scanned segments. Field is part of the
+    # pool because the readback -> frame mapping depends on the magnet/
+    # ExB configuration — pools never mix field epochs.
     specs = {}
     for k in keys:
-        specs.setdefault((holders[k], conventions[k]), []).append(k)
+        specs.setdefault((holders[k], conventions[k], fields[k]),
+                         []).append(k)
     candidates = {s: ks for s, ks in specs.items() if s[0] == args.holder}
     if not candidates:
         raise SystemExit(f"no scanned segments for holder {args.holder!r}; "
                          f"have {sorted(specs)}")
-    spec = max(candidates, key=lambda s: len(candidates[s]))
-    holder, convention = spec
-    spec_keys = candidates[spec]
     if args.runs:
-        spec_keys = [k for k in spec_keys if k[0] in set(args.runs)]
-        if not spec_keys:
+        candidates = {
+            s: [k for k in ks if k[0] in set(args.runs)]
+            for s, ks in candidates.items()
+        }
+        candidates = {s: ks for s, ks in candidates.items() if ks}
+        if not candidates:
             raise SystemExit(f"no scanned segments from runs {args.runs} "
                              f"for holder {args.holder!r} — are their trap "
                              "filter outputs ingested?")
+    spec = max(candidates, key=lambda s: len(candidates[s]))
+    holder, convention, field = spec
+    spec_keys = candidates[spec]
 
     lines = []  # everything printed is also saved to <stem>_summary.txt
 
@@ -385,20 +397,14 @@ def main() -> None:
         print(text)
         lines.append(text)
 
-    report(f"planning {holder} under {convention} "
+    report(f"planning {holder} under {convention} at field {field} "
            f"({len(spec_keys)} scanned segments"
            f"{f' from runs {sorted(set(args.runs))}' if args.runs else ''})")
-
-    # The readback -> frame mapping depends on the magnet field, so a
-    # trend fitted across field settings is meaningless. Warn loudly.
-    with get_session() as session:
-        fields = {(r.main, r.udet) for r in session.scalars(
-            select(Run).where(Run.run_number.in_(
-                {k[0] for k in spec_keys})))}
-    if len(fields) > 1:
-        report(f"  WARNING: these segments span DIFFERENT magnet settings "
-               f"(main, udet): {sorted(fields)} — the fitted trend mixes "
-               f"field epochs. Use --runs to plan within one epoch.")
+    for other, other_keys in sorted(candidates.items(), key=str):
+        if other != spec:
+            report(f"  note: {len(other_keys)} segment(s) also exist at "
+                   f"field {other[2]} — plan them with --runs or after "
+                   f"more scans make that pool the largest")
 
     # Same evidence preparation as assignment, restricted to this spec so
     # baselines stay within one bias/threshold epoch.
@@ -421,13 +427,14 @@ def main() -> None:
                               for det in ("upper", "lower")}
         frames, trends = locate_all_frames(
             excesses, key_positions, conventions, holders,
-            offsets_for_locate)
+            offsets_for_locate, fields=fields)
         offsets_by_det, refine_report = refine_slot_offsets(
             excesses, frames, offsets_by_det, spec_keys)
     offsets_for_locate = {spec + (det,): offsets_by_det[det]
                           for det in ("upper", "lower")}
     _frames, trends = locate_all_frames(
-        excesses, key_positions, conventions, holders, offsets_for_locate)
+        excesses, key_positions, conventions, holders, offsets_for_locate,
+        fields=fields)
     trend = trends[spec]
 
     if rounds:

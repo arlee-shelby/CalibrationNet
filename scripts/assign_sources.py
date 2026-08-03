@@ -30,6 +30,7 @@ from sqlalchemy import select
 from calibrationnet.db import get_session
 from calibrationnet.geometry import physical_position
 from calibrationnet.models import (
+    Run,
     RunPixel,
     RunSegment,
     Source,
@@ -42,6 +43,7 @@ from calibrationnet.pipeline.source_assignment import (
     compute_baselines,
     excess_map,
     fetch_all_counts,
+    field_key,
     installation_for,
     locate_all_frames,
     slot_offsets,
@@ -86,6 +88,12 @@ def generate_review(label: str, force: bool) -> None:
         slot_maps, holders = {}, {}
         for k in counts:
             slot_maps[k], holders[k] = installation_for(session, segments[k])
+        # Field configuration per segment: pools must never mix magnet/
+        # ExB epochs (the readback->frame mapping depends on them).
+        runs = {r.run_number: r for r in session.scalars(
+            select(Run).where(Run.run_number.in_(
+                {k[0] for k in counts})))}
+        fields = {k: field_key(runs[k[0]]) for k in counts}
 
     unplaceable = sorted(k for k in counts
                          if key_positions[k][0] is None
@@ -95,32 +103,40 @@ def generate_review(label: str, force: bool) -> None:
               f"and are skipped: {unplaceable[:5]}")
 
     keys = [k for k in sorted(counts) if k not in unplaceable]
-    # Baselines are per convention, NOT across the whole campaign: a
-    # pixel's intrinsic rate depends on the bias/threshold conditions of
-    # its epoch, so mixing epochs distorts every excess. (Mixing the 2025
-    # and 2026 data inflated one verified source pixel's baseline nearly
-    # 8-fold, which was enough to pull frames a whole pixel row off.)
+    # Baselines are per (convention, field), NOT across the whole
+    # campaign: a pixel's intrinsic rate depends on the bias/threshold/
+    # field conditions of its epoch, so mixing epochs distorts every
+    # excess. (Mixing the 2025 and 2026 data inflated one verified
+    # source pixel's baseline nearly 8-fold, which was enough to pull
+    # frames a whole pixel row off; the 110 A and 137 A epochs of 2026
+    # are likewise kept apart.)
     baselines = {}
-    for convention in set(conventions[k] for k in keys):
-        subset = {k: counts[k] for k in keys if conventions[k] == convention}
-        baselines[convention] = compute_baselines(subset)
-        print(f"baselines for {convention}: {len(subset)} segment(s)")
+    for pool in set((conventions[k], fields[k]) for k in keys):
+        subset = {k: counts[k] for k in keys
+                  if (conventions[k], fields[k]) == pool}
+        baselines[pool] = compute_baselines(subset)
+        print(f"baselines for {pool[0]} at {pool[1]}: "
+              f"{len(subset)} segment(s)")
     excesses = {k: {det: excess_map(counts[k][det],
-                                    baselines[conventions[k]][det])
+                                    baselines[(conventions[k],
+                                               fields[k])][det])
                     for det in ("upper", "lower")}
                 for k in keys}
     # Slot offsets are a property of the physical frame, so they only
-    # depend on the convention's anchor, not on the segment.
+    # depend on the convention's anchor, not on the segment — but the
+    # offsets dict is keyed by the full pool spec (incl. field) because
+    # frame location and trends group by it.
     offsets = {}
     for k in keys:
-        spec = (holders[k], conventions[k])
+        spec = (holders[k], conventions[k], fields[k])
         for det in ("upper", "lower"):
             if spec + (det,) not in offsets:
                 offsets[spec + (det,)] = slot_offsets(
                     holders[k], conventions[k], det, slot_maps[k])
 
     frames, _trends = locate_all_frames(
-        excesses, key_positions, conventions, holders, offsets)
+        excesses, key_positions, conventions, holders, offsets,
+        fields=fields)
 
     review_rows = []
     flagged = 0
@@ -129,7 +145,8 @@ def generate_review(label: str, force: bool) -> None:
         for det in ("upper", "lower"):
             labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
             tx, ty = frames[(k, det)]
-            slot_offset = offsets[(holders[k], conventions[k], det)]
+            slot_offset = offsets[(holders[k], conventions[k],
+                                   fields[k], det)]
             preds = {slot: (tx + slot_offset[slot][0],
                             ty + slot_offset[slot][1]) for slot in labels}
             excess = excesses[k][det]
@@ -145,6 +162,7 @@ def generate_review(label: str, force: bool) -> None:
                 flagged += flag
                 review_rows.append({
                     "run": run_number, "segment": segment_index,
+                    "field": fields[k],
                     "detector": det, "slot": slot, "source": label_,
                     "pred_x": round(pred[0], 2),
                     "pred_y": round(pred[1], 2),

@@ -172,17 +172,14 @@ untouched and the phase-0 benchmark stays identically green.
 Still open in phase 4: blend recipes (strategies A/B/C above), and
 possibly restructuring `get_fit` into composable steps (benchmarked).
 
-**Known issue (2026-08-03):** source assignment pools segments per
-(holder, convention) — it already keys on the installation (holder),
-but NOT on the magnet field. Field epochs on record so far: fall 2025 =
-5-slot tray at 137 A (runs 8622–8865, incl. 8718); July 2026 scans =
-6-slot at 110 A (9326–9378); run 9402 = 6-slot back at 137 A. So the
-inches-2026 pool now mixes 110 A and 137 A segments in one set of
-baselines and one trend — the same field-mixing the position planner
-solved with --runs. Assignment needs (holder, convention, field)
-separation before global re-assignment (scripts/assign_sources.py,
-also run by process_run.py) becomes routine; until then, review the
-assignment CSV after processing runs at a new field setting.
+**RESOLVED (2026-08-04):** source assignment and position planning now
+pool per (holder, convention, FIELD) — field_key(run) captures magnet
+currents + ExB (100 V bins). Validation: field-blind derivation had
+anchor run 9326's own placements a full pixel column off its
+eye-verified pixels; field-aware pools reproduce them exactly, and the
+corrected assignments are applied. The review CSV carries a `field`
+column and is tracked, so re-derivations diff cleanly. Details:
+docs/source_assignment.md.
 
 ## Resolved questions (2026-07-31)
 

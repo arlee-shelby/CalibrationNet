@@ -58,27 +58,31 @@ and a `flag`:
 unless `--force`. `scripts/process_run.py` runs derive + apply
 automatically, which applies only the non-CHECK rows.
 
-## Pools, holders, fields — read this before trusting a re-assignment
+## Pools, holders, fields
 
-Placements pool per **(holder, convention)** — the tray geometry is a
-property of the physical holder, and anchors are keyed the same way.
-The epochs on record:
+Placements pool per **(holder, convention, field)**. The tray geometry
+is a property of the physical holder (anchors are keyed by holder +
+convention), and the field key —
+`source_assignment.field_key(run)`, e.g. `137/137A-exb2000` — captures
+the magnet currents and ExB voltage (binned at 100 V, so residual
+readings of a few volts don't split pools), because the readback→frame
+mapping measurably depends on them (110 A → 137 A changed the
+horizontal scale ~5% and removed the upper-detector shear). Baselines
+and trends never mix field epochs; every review-CSV row carries its
+`field` for visibility. The pools on record:
 
-| epoch | holder | convention | field (main/udet) |
+| epoch | holder | convention | field key |
 |---|---|---|---|
-| fall 2025 (runs ≤ 8865) | 5-slot | legacy-units | 137 A |
-| 2026-07-24 .. 07-30 (9326–9378) | 6-slot | inches-2026 | 110 A |
-| 9402 (2026-07-31) | 6-slot | inches-2026 | **137 A** |
+| fall 2025 (runs ≤ 8865) | 5-slot | legacy-units | 137/137A-exb-1500 |
+| 2026-07-24 .. 07-30 (9326–9378) | 6-slot | inches-2026 | 110/110A-exb0 |
+| 9402+ (2026-07-31 →) | 6-slot | inches-2026 | 137/137A-exb2000 |
 
-**Known limitation:** the pool key does NOT include the magnet field,
-but the field sets the readback→frame mapping (measured: the horizontal
-scale changed ~5% and the upper-detector shear vanished going
-110 A → 137 A). The inches-2026 pool therefore currently mixes two
-field epochs in one baseline/trend set. Counts evidence usually
-dominates single placements, but until assignment gains per-field
-separation (like the position planner's `--runs`): **after processing
-runs at a new field setting, diff the review CSV and check the CHECK
-rows by hand.**
+**Why this matters (validation):** derived field-blind, the anchor run
+9326's own placements sat a full pixel column off its eye-verified
+pixels (upper R1C2 at 87 instead of 97, etc.); with field-aware pools
+they land exactly on the verified pixels, and 9327 snaps to them at
+0.07–0.09 radius. Diff `source_assignment_review.csv` (it is tracked)
+after any re-derivation to see precisely what moved.
 
 ## Relationship to position planning
 
