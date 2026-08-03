@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .adc_peak import ADCPeak
     from .run_pixel import RunPixel
     from .source import KeVPeak
+    from .trap_filter_output import TrapFilterOutput
 
 
 class Calibration(CovarianceMixin, Base):
@@ -19,9 +20,13 @@ class Calibration(CovarianceMixin, Base):
     fit from measured ADC centroids against known keV values.
 
     A calibration deliberately does NOT link to one spectrum_fit: its
-    points come from SEVERAL fits of the same trap filter output (the CE
-    window and the Auger window), so which fits contributed is recorded
-    per point, through calibration_points -> adc_peak -> spectrum_fit.
+    points come from SEVERAL fits (the CE window and the Auger window),
+    so which fits contributed is recorded per point, through
+    calibration_points -> adc_peak -> spectrum_fit. It DOES link to one
+    trap_filter_output: the ADC scale is a property of the trap setting,
+    so every point of a calibration must come from fits of the same
+    output — and "calibrations for this pixel at these settings" becomes
+    a direct join.
 
     Multiple attempts are kept — different trap settings, and
     recalibrations when the known energies are updated from simulation —
@@ -49,6 +54,9 @@ class Calibration(CovarianceMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     run_pixel_id: Mapped[int] = mapped_column(
         ForeignKey("run_pixels.id"), index=True
+    )
+    trap_filter_output_id: Mapped[int] = mapped_column(
+        ForeignKey("trap_filter_outputs.id"), index=True
     )
 
     # Which calibration attempt this is, e.g. "nndc-2026", "sim-corrected".
@@ -82,6 +90,9 @@ class Calibration(CovarianceMixin, Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     run_pixel: Mapped["RunPixel"] = relationship(
+        back_populates="calibrations"
+    )
+    trap_filter_output: Mapped["TrapFilterOutput"] = relationship(
         back_populates="calibrations"
     )
     points: Mapped[List["CalibrationPoint"]] = relationship(

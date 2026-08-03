@@ -55,7 +55,15 @@ throughout, from AS:
   - Ce-139's fourth line added: "CE 166" = 165.5871 (14), 0.1085 (16) %.
 - CHECK thresholds settled: centroid errors 5%, width errors 50%.
 
-## Phase 2 — ADC peak extraction & matching (`scripts/extract_adc_peaks.py`)
+## Phase 2 — ADC peak extraction & matching — v1 DONE 2026-08-03
+
+`scripts/extract_adc_peaks.py`. Validated on run 8622 pixels 60/67/80/
+1051: clean pixels match with sub-keV CE residuals; pixel 80's junk
+Auger fit and pixel 1051's scrambled CE fit (the LDET resolution
+problem at standard trap settings) were caught — implausible peaks
+stored with NULL line, never matched. Blend/partial matching (Cd-109,
+Ce-139, and fits with fewer peaks than lines) is deliberately NOT in
+v1; it lands with the phase-4 recipe work. Original design:
 
 Per (run pixel, current fits):
 

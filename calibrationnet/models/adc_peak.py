@@ -44,5 +44,12 @@ class ADCPeak(Base):
         back_populates="adc_peak"
     )
 
+    @property
+    def run_pixel(self):
+        """Shortcut through fit -> output — handy in plotting loops. To
+        FILTER by run or pixel in SQL, join the chain instead (see
+        calibrationnet/queries.py)."""
+        return self.spectrum_fit.trap_filter_output.run_pixel
+
     def __repr__(self) -> str:
         return f"ADCPeak(centroid_adc={self.centroid_adc})"

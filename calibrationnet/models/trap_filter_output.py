@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
+    from .calibration import Calibration
     from .run_pixel import RunPixel
     from .spectrum_fit import SpectrumFit
 
@@ -56,6 +57,11 @@ class TrapFilterOutput(Base):
     )
     fits: Mapped[List["SpectrumFit"]] = relationship(
         back_populates="trap_filter_output", cascade="all, delete-orphan"
+    )
+    # A calibration is tied to ONE output: the ADC scale is a property
+    # of the trap setting, so all of its points share this output.
+    calibrations: Mapped[List["Calibration"]] = relationship(
+        back_populates="trap_filter_output"
     )
 
     def __repr__(self) -> str:

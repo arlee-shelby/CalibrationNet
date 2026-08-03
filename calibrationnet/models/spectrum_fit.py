@@ -98,6 +98,14 @@ class SpectrumFit(CovarianceMixin, Base):
             config=config,
         )
 
+    @property
+    def run_pixel(self):
+        """Shortcut through the output — handy in plotting loops
+        (fit.run_pixel.run_number / .pixel_number). To FILTER by run or
+        pixel in SQL, join through TrapFilterOutput to RunPixel instead
+        (see calibrationnet/queries.py)."""
+        return self.trap_filter_output.run_pixel
+
     def __repr__(self) -> str:
         return (
             f"SpectrumFit(trap_filter_output_id={self.trap_filter_output_id},"

@@ -246,6 +246,14 @@ errors above 5% (widths above 50%) are flagged `CHECK`; `--plot` saves a
 QA figure per fit. Storage details:
 [docs/fit_storage.md](docs/fit_storage.md).
 
+After fitting,
+[scripts/extract_adc_peaks.py](scripts/extract_adc_peaks.py) breaks each
+stored fit into adc_peaks rows matched to the isotope's decay lines:
+centroids pair with line energies by ascending order, then a per-pixel
+two-anchor energy line (lowest-energy + highest-intensity CE line) must
+confirm every match within `--tolerance-kev` — implausible peaks are
+stored with no line and flagged, so bad fits can't feed a calibration.
+
 The fit code is under a strict change policy
 ([docs/pipeline_roadmap.md](docs/pipeline_roadmap.md)): the physics
 functions are frozen, and any change to the changeable ones must pass
@@ -411,4 +419,21 @@ outputs = session.scalars(
     .join(TrapFilterOutput.run_pixel)
     .where(RunPixel.run_number == 8622, RunPixel.pixel_number == 63)
 ).all()
+```
+
+For the questions the analysis asks constantly — one pixel across every
+run, optionally pinned to a trap setting or to run conditions —
+[calibrationnet/queries.py](calibrationnet/queries.py) has ready-made
+helpers so the join chains never need rebuilding:
+
+```python
+from calibrationnet.queries import (calibrations_for_pixel,
+                                    fits_for_pixel, peaks_for_pixel)
+
+# CE 976 centroid vs run for pixel 60 at the standard trap setting:
+peaks_for_pixel(session, 60, line_label="CE 976", trap=(1250, 50, 1250))
+# every fit for pixel 60 across runs:
+fits_for_pixel(session, 60)
+# calibrations for pixel 60 from runs at -300 V detector bias:
+calibrations_for_pixel(session, 60, udet_bias=-300.0)
 ```
