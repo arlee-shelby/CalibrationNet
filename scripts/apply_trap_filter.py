@@ -19,6 +19,7 @@ from pathlib import Path
 
 from calibrationnet.db import get_session
 from calibrationnet.models import RunSegment
+from calibrationnet.pipeline.board_channels import ingest_board_channels
 from calibrationnet.pipeline.trap_filter import (
     ingest_filter_output,
     segments_missing_output,
@@ -28,6 +29,7 @@ from calibrationnet.pipeline.waveforms import (
     find_subruns,
     save_filter_output,
     segment_energies,
+    subrun_file,
     to_ticks,
 )
 
@@ -122,6 +124,21 @@ def main() -> None:
         )
         session.commit()
         print(f"ingested {len(outputs)} pixel outputs")
+
+        # The board-channel map lives in the same h5 files this task just
+        # filtered, so fill run_pixels.board_channel here — no separate
+        # extract/transfer CSV step. Idempotent and per-run: every task
+        # re-applies the same map to whatever run_pixels exist by then,
+        # so between all of a run's tasks every segment gets covered.
+        try:
+            n_bc = ingest_board_channels(
+                session, args.run,
+                subrun_file(args.directory, args.run, subruns[0]))
+            session.commit()
+            print(f"board channels set for {n_bc} pixels")
+        except Exception as exc:
+            session.rollback()
+            print(f"note: board-channel ingest skipped ({exc})")
 
         # Parallel tasks share only the database, so ask it whether this
         # task happened to be the last one for the run.

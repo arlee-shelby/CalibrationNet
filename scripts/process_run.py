@@ -31,14 +31,48 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from calibrationnet.db import get_session
-from calibrationnet.models import Run, RunPixel, RunSegment
+from calibrationnet.models import (Isotope, IsotopeDecayEnergy, Pixel, Run,
+                                   RunPixel, RunSegment, Source,
+                                   SourceInstallation)
 
 
 def stage(title):
     print(f"\n=== {title} " + "=" * max(0, 60 - len(title)))
+
+
+def preflight(session, run_number) -> list:
+    """Everything the pipeline assumes is already in the database.
+    Returns a list of blocking problems (empty = good to go)."""
+    problems = []
+    counts = {
+        "pixels (scripts/seed_pixels.py)": Pixel,
+        "sources (scripts/seed_sources.py)": Source,
+        "isotope decay lines (scripts/seed_decay_energies.py)":
+            IsotopeDecayEnergy,
+        "isotopes (scripts/seed_sources.py)": Isotope,
+    }
+    for what, model in counts.items():
+        n = session.execute(
+            select(func.count()).select_from(model)).scalar()
+        if n == 0:
+            problems.append(f"no {what} seeded")
+    run = session.get(Run, run_number)
+    if run is not None and run.start_time is not None:
+        day = run.start_time.date()
+        covered = session.execute(
+            select(func.count()).select_from(SourceInstallation)
+            .where(SourceInstallation.installed_on <= day,
+                   (SourceInstallation.removed_on.is_(None))
+                   | (SourceInstallation.removed_on > day))).scalar()
+        if covered == 0:
+            problems.append(
+                f"no source installation covers {day} — update "
+                "data/source_installations.csv and re-seed "
+                "(scripts/seed_source_installations.py)")
+    return problems
 
 
 def run_script(argv, **kwargs) -> int:
@@ -55,6 +89,12 @@ def main() -> None:
                         help="directory with the run's .h5 files (needed "
                              "only when trap filtering must be submitted)")
     parser.add_argument("--tf-label", default="nabpy-standard")
+    parser.add_argument("--rt", type=int, default=1250,
+                        help="trap rise time (4 ns bins)")
+    parser.add_argument("--ft", type=int, default=50,
+                        help="trap flat top (4 ns bins)")
+    parser.add_argument("--fall", type=int, default=1250,
+                        help="trap fall time (4 ns bins)")
     parser.add_argument("--skip-ingest", action="store_true",
                         help="skip the slow-controls ingest stage")
     parser.add_argument("--min-dwell", type=float, default=None,
@@ -89,25 +129,33 @@ def main() -> None:
             select(RunSegment.segment_index)
             .where(RunSegment.run_number == run_number)
             .order_by(RunSegment.segment_index)).all()
+        problems = preflight(session, run_number)
     if not segments:
         raise SystemExit(f"run {run_number} has no segments — ingest it "
                          "first (slow-controls tunnel required).")
     print(f"run {run_number}: {len(segments)} segment(s)")
+    if problems:
+        raise SystemExit("preflight failed:\n  - " + "\n  - ".join(problems))
 
     # 2. Trap filter ----------------------------------------------------
     stage("trap filter outputs")
     pending = subprocess.run(
         [sys.executable, "scripts/pending_segments.py",
-         "--runs", str(run_number), "--label", args.tf_label],
+         "--runs", str(run_number), "--label", args.tf_label,
+         "-rt", str(args.rt), "-ft", str(args.ft), "-fall", str(args.fall)],
         capture_output=True, text=True)
     missing = [line for line in pending.stdout.splitlines() if line.strip()]
     if missing:
-        print(f"{len(missing)} segment(s) lack '{args.tf_label}' outputs.")
+        print(f"{len(missing)} segment(s) lack '{args.tf_label}' outputs "
+              f"at rt={args.rt} ft={args.ft} fall={args.fall}.")
         if shutil.which("sbatch") and args.h5_dir:
             run_list = Path(f"run_{run_number}.txt")
             run_list.write_text(f"{run_number}\n")
             code = subprocess.call(["./scripts/submit_trap_filter.sh",
-                                    str(run_list), args.h5_dir])
+                                    str(run_list), args.h5_dir,
+                                    str(args.rt), str(args.ft),
+                                    str(args.fall), "singles",
+                                    args.tf_label])
             raise SystemExit(
                 code or f"trap filter array submitted — re-run this "
                         f"script when it completes "
@@ -118,6 +166,21 @@ def main() -> None:
             f"filter there first:\n  echo {run_number} > run.txt && "
             f"./scripts/submit_trap_filter.sh run.txt <h5_dir>")
     print("all segments have outputs")
+
+    # 2.5 Board channels: the cluster trap task now fills them from the
+    # h5 map as it ingests; runs filtered before that change may lack
+    # them. Informational only — nothing downstream of here needs them.
+    with get_session() as session:
+        n_bc = session.execute(
+            select(func.count()).select_from(RunPixel)
+            .where(RunPixel.run_number == run_number,
+                   RunPixel.board_channel.is_not(None))).scalar()
+    if n_bc == 0:
+        print(f"NOTE: run {run_number} has no board channels recorded — "
+              "on the cluster: python scripts/ingest_board_channels.py "
+              f"{run_number} <any subrun .h5>")
+    else:
+        print(f"board channels recorded for {n_bc} run pixels")
 
     # 3. Source assignment ----------------------------------------------
     stage("source assignment")

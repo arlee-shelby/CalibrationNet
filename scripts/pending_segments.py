@@ -78,6 +78,27 @@ def main() -> None:
             # Treat nothing as done, so every segment is listed/redone.
             missing = {run: list(range(totals[run])) for run in runs}
 
+        # Every OTHER (settings, label) combination these runs hold, so
+        # a check with the wrong/default flags can never silently answer
+        # a different question than the one being asked (e.g. standard
+        # outputs masking a short-trap submission).
+        from calibrationnet.models import RunPixel, TrapFilterOutput
+        combo_rows = session.execute(
+            select(TrapFilterOutput.trap_rise, TrapFilterOutput.trap_flattop,
+                   TrapFilterOutput.trap_falltime, TrapFilterOutput.label,
+                   RunPixel.run_number, RunPixel.segment_index)
+            .join(RunPixel, TrapFilterOutput.run_pixel_id == RunPixel.id)
+            .where(RunPixel.run_number.in_(runs))
+            .distinct()
+        ).all()
+        others = {}
+        for rise, flattop, fall, label, run, seg in combo_rows:
+            if (rise, flattop, fall, label) == (args.risetime, args.flattop,
+                                                args.falltime, args.label):
+                continue
+            others.setdefault((rise, flattop, fall, label),
+                              set()).add((run, seg))
+
     if not args.summary:
         for run in sorted(runs):
             for segment in missing.get(run, []):
@@ -101,6 +122,13 @@ def main() -> None:
     incomplete = [r for r in runs if missing.get(r)]
     print(f"\n{done_segments}/{total_segments} segments ingested "
           f"across {len(runs)} run(s)")
+    if others:
+        print("these runs ALSO hold outputs at other settings — pass "
+              "-rt/-ft/-fall/--label to report on one of these instead:")
+        for (rise, flattop, fall, label), segs in sorted(
+                others.items(), key=lambda kv: str(kv[0])):
+            print(f"  rt={rise:g} ft={flattop:g} fall={fall:g} "
+                  f"({label}): {len(segs)} segment(s)")
     if incomplete:
         print(f"INCOMPLETE: {len(incomplete)} run(s) still missing segments: "
               f"{sorted(incomplete)}")

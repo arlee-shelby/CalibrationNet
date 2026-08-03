@@ -46,7 +46,7 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 |---|---|---|
 | seed_pixels / seed_sources / seed_source_installations / seed_decay_energies | files in `data/` | pixels, sources, source_installations, isotope_decay_energies + kev_peaks tables |
 | ingest_run.py | slow-controls DB (tunnel) + motion archive | runs + run_segments tables |
-| submit_trap_filter.sh → apply_trap_filter.{sh,py} (cluster) | run .h5 files | trap_filter_outputs table (manifest + logs under `data/TrapFilterData/`) |
+| submit_trap_filter.sh → apply_trap_filter.{sh,py} (cluster) | run .h5 files | trap_filter_outputs table AND run_pixels.board_channel (the map is read from the same h5); staging CSVs + manifest + logs under `data/TrapFilterData/` |
 | ingest_filter_output.py | a filter-output CSV | trap_filter_outputs table |
 | ingest_board_channels.py / extract_bc_maps.py | run .h5 / `data/bc_maps.csv` | run_pixels.board_channel |
 | assign_sources.py | trap filter counts | `source_assignment_review.csv`; `--apply` writes run_pixels.source_id |
@@ -66,3 +66,9 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 - `calibrationnet/fit_functions_reference.py` must NEVER change
   (md5-pinned; scripts/benchmark_fits.py verifies).
 - Table/column changes always go through an alembic migration.
+- **One trap-filter label per setting.** fit/extract/calibrate select
+  outputs by `label`; if two different (rise, flattop, fall) settings
+  share a label, each output still gets its own fits and calibrations,
+  but `is_current` per (run_pixel, type) lands on whichever calibrated
+  last. Give comparison settings their own label (e.g.
+  "ldet-rt150-ft20").
