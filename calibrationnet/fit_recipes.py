@@ -17,7 +17,11 @@ RECIPES = {
                      "sig4": 5, "sig5": 5, "sig6": 5}),
         dict(label="auger-2peak", bounds=(20, 180), n_peaks=2,
              peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
-             widths={"sig1": 3, "sig2": 3, "sig3": 5}),
+             widths={"sig1": 3, "sig2": 3, "sig3": 5},
+             # Low-statistics window sitting on the threshold tail:
+             # honest centroid errors run well past the default 5% bar
+             # (AS, 2026-08-04), so the health/CHECK bar is 25% here.
+             error_thresholds={"cen": 0.25, "sig": 0.50}),
     ],
 }
 

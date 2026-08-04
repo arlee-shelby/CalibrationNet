@@ -51,7 +51,8 @@ def gain_scout(data, anchor):
 
 
 def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
-                             scout_ratio, relation, plot_path, title):
+                             scout_ratio, relation, plot_path, title,
+                             thresholds):
     """Second-chance fit with COMPUTED starting guesses.
 
     find_peaks needs distinct bumps to build the initial parameters;
@@ -98,7 +99,7 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
     if not result.success:
         print("    (predicted-start rejected: did not converge)")
         return None
-    for prefix, threshold in ERROR_THRESHOLDS.items():
+    for prefix, threshold in thresholds.items():
         for name, par in result.params.items():
             if (name.startswith(prefix)
                     and (par.stderr is None
@@ -125,6 +126,39 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
         fig.savefig(plot_path, dpi=120, bbox_inches="tight")
         plt.close(fig)
     return result
+
+
+def plot_failed_spectrum(data, recipe, scout_ratio, prediction, plot_path):
+    """Every failure still gets a figure: the raw windowed spectrum with
+    the predicted line positions marked, so WHY a fit failed can be
+    judged by eye (AS policy: every fit attempt must be reviewable)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    hist, edges = np.histogram(data, bins=np.arange(0, 4500))
+    lo = int(round(recipe["bounds"][0] * scout_ratio))
+    hi = int(round(recipe["bounds"][1] * scout_ratio))
+    fig, axis = plt.subplots(figsize=(10, 6))
+    # Failure figures show the spectrum from 0, not just the fit window,
+    # so the hardware threshold peak is always visible (AS request).
+    axis.stairs(hist[0:hi], edges[0:hi + 1])
+    axis.axvspan(0, lo, color="grey", alpha=0.15)
+    axis.axvline(lo, color="grey", lw=0.8)
+    if prediction is not None:
+        energies, relation = prediction
+        for energy in energies:
+            adc = (scout_ratio * (energy - relation["constant_kev"])
+                   / relation["gain_kev_per_adc"])
+            if lo < adc < hi:
+                axis.axvline(adc, ls="--", color="grey", alpha=0.7)
+        axis.plot([], [], ls="--", color="grey",
+                  label="predicted line positions")
+        axis.legend()
+    axis.set_ylabel("Counts")
+    axis.set_xlabel("Energy (ADC)")
+    axis.set_title(plot_path.stem + " — ALL FITS FAILED (data only)")
+    fig.savefig(plot_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
 
 
 def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
@@ -171,11 +205,26 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                 data, bounds[0], bounds[1], peak_finder,
                 recipe["n_peaks"], widths,
                 plot=plot_path is not None, axis=axis,
+                threshold_params=recipe.get("threshold_params", {}),
             )
         except Exception as exc:
             if fig is not None:
                 plt.close(fig)
             last_exc = exc
+            continue
+        # AS policy (2026-08-04): a fit without uncertainties is a
+        # failed fit — never stored; keep trying further attempts.
+        if not result.success or any(
+                result.params[name].stderr is None
+                for name in result.var_names):
+            if fig is not None:
+                plt.close(fig)
+            reason = ("did not converge" if not result.success
+                      else "no uncertainties (singular covariance)")
+            print(f"    ({attempt}: converged but {reason} — treated "
+                  "as failed)" if result.success else
+                  f"    ({attempt}: {reason} — treated as failed)")
+            last_exc = RuntimeError(f"fit {reason}")
             continue
         if attempt != "recipe":
             print(f"    (accepted on retry: {attempt})")
@@ -198,7 +247,8 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
         result = fit_from_predicted_start(
             data, bounds, recipe["n_peaks"], widths, energies,
             scout_ratio, relation, plot_path,
-            plot_path.stem if plot_path is not None else recipe["label"])
+            plot_path.stem if plot_path is not None else recipe["label"],
+            recipe.get("error_thresholds", ERROR_THRESHOLDS))
         if result is not None:
             print("    (accepted via predicted-start initialization)")
             config = {
@@ -223,10 +273,10 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
 ERROR_THRESHOLDS = {"cen": 0.05, "sig": 0.50}
 
 
-def centroid_report(result):
+def centroid_report(result, thresholds=None):
     """'cen1=1330.5+-0.1 ...' — the numbers that feed calibrations."""
     lines, suspicious = [], False
-    for prefix, threshold in ERROR_THRESHOLDS.items():
+    for prefix, threshold in (thresholds or ERROR_THRESHOLDS).items():
         parts = []
         for name in sorted(p for p in result.params
                            if p.startswith(prefix)):
@@ -344,6 +394,9 @@ def main() -> None:
                     except Exception as exc:
                         print(f"  {recipe['label']}: FAILED after ladder "
                               f"({exc})")
+                        if plot_path is not None:
+                            plot_failed_spectrum(data, recipe, scout_ratio,
+                                                 prediction, plot_path)
                         failed += 1
                         continue
 
@@ -364,7 +417,8 @@ def main() -> None:
                     session.add(fit)
                     pixel_fitted += 1
 
-                    report_lines, suspicious = centroid_report(result)
+                    report_lines, suspicious = centroid_report(
+                        result, recipe.get("error_thresholds"))
                     flag = "  <-- CHECK errors" if suspicious else ""
                     if scout_ratio != 1.0:
                         # Low gain is not stationary (pixels drift in and

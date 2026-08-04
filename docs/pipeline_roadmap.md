@@ -217,20 +217,49 @@ composes add_parameters/do_fit (changeable) at script level.
     — their peaks physically merge at standard trap settings, i.e. the
     BLEND class for 4.4/4.5 — and windows containing empty bins (NaN
     from zero uncertainty: 8718 p84 CE, several Augers).
-  Findings for AS review before 4.3:
-  1. The p95 Auger acceptance came from the nominal-window fallback
-     with nominal predictions on a low-gain pixel — the second broad
-     component eats background; extraction's anchor validation will
-     refuse the matches, but should predicted-start even run at nominal
-     windows when the scout fired?
-  2. The health gate rejected a scout-window Auger fit whose honest
-     errors (17% on centroid) may have been the physically right fit —
-     are the 5%/50% thresholds right for the Auger window?
-  3. Fits can "succeed" (lmfit success=True) with NO uncertainties at
-     all (singular covariance from merged peaks: 8637 p77/p1091) —
-     stored and CHECK-flagged today; extraction now skips
-     success=False fits, but stderr-less successes still flow until a
-     policy is chosen (4.3).
+  AS verification round 1 (2026-08-04) — observations and rulings:
+  - **LDET Auger lines are BLENDED at standard trap settings** (both
+    lines inside one peak; confirmed against the short-trap data). The
+    2-free-peak Auger recipe is the wrong model on LDET — fitting the
+    blend properly is 4.4's job. Seen on 8631p1067, 8637p1091,
+    8718p1018/1030/1031, and suspected everywhere on LDET.
+  - **Ruling: a fit without uncertainties IS a failed fit.** Now
+    enforced at every attempt: non-converged or stderr-less results
+    are never stored and the attempt ladder continues (possibly into
+    the second-chance fit).
+  - **Ruling: the 5% centroid bar is too strict for the Auger window**
+    — raised to 25% there (per-recipe error_thresholds; CE stays 5%).
+  - **Every fit attempt must be reviewable**: failures previously
+    saved NO figure (why AS couldn't find the CE fits for 91, 84, 85,
+    109, 1017, 1018, 1031). Now every failure saves a data-only figure
+    with the predicted line positions marked.
+  - **Threshold peak centered at ~0 ADC** distorts the Auger window;
+    AS proposes adding a fixed-zero gaussian threshold component to
+    the fit model. Agreed it should help — that is AS's change to the
+    physics model; the workflow when it lands: benchmark old-vs-new on
+    the reference pixels, and if adopted, bless the new module as the
+    reference copy (new md5) with the version documented.
+  - Open confusions to resolve with the new complete plot set: the
+    sharp ~60 ADC peak on 8718 p84/p85 (ties to the ~62 ADC mystery
+    line), p1043's Auger window contents, p109's fit region, and p95's
+    Auger shape (expected: at 0.44x gain the Augers sit at ~35-50 ADC
+    inside the threshold tail — they cannot look like 8622 p60's).
+  - p99's missed 566 stays the flagship case FOR 4.3: its find_peaks
+    fit passes every health check, so the rescue never runs — only a
+    quality-retry (e.g. triggered by extraction refusing a line) can
+    reach it.
+
+  AS verification round 2 (2026-08-05): per-pixel verdicts established
+  that the one-ratio prediction is biased in both directions, the LDET
+  Auger region is a blend (likely Augers + Pb X-rays together), some
+  pixels need a statistics gate or are hidden by the hardware
+  threshold, and X-ray lines belong in the line tables. Full evidence,
+  candidate strategies (AS's three ideas + six more), proposed order,
+  and open questions: **docs/initial_guess_plan.md** — under
+  discussion, nothing implemented yet beyond failure figures starting
+  at 0 ADC. AS's model got its threshold component this same day
+  (optional, bounded, comparison copy updated twice with same-numbers
+  checks passing).
 - **4.3 Quality retry (AS decision point)**: optionally also try the
   predicted init when a finder fit is CHECK-flagged, keeping the
   better fit (error health + reduced chi2). Only if 4.2's results

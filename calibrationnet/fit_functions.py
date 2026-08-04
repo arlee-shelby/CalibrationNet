@@ -39,13 +39,26 @@ def fit_model(params,x):
     
     linear_background = background(x, slope, intercept)
 
-    return peak_func + linear_background
+    if 'threshold' in params and params['threshold'].value:
+        threshold_z = x/params['threshold_sig'].value
+        threshold_amp = params['threshold_amp'].value
+        fit_func = peak_func + linear_background + gaussian(threshold_z,threshold_amp)
+
+    else:
+        fit_func = peak_func + linear_background
+
+    return fit_func
 
 def residual_function(params, x, y, alpha):
     model = fit_model(params, x)
     return (model - y) / alpha
 
-def add_parameters(params,initial_peak_parameters,initial_parameter_values=None):
+def add_parameters(params,initial_peak_parameters,initial_parameter_values=None,threshold_params={}):
+
+    if threshold_params!={}:
+        params.add('threshold',value=True,vary=False)
+        params.add('threshold_sig',value=threshold_params['sig'],min=0)
+        params.add('threshold_amp',value=threshold_params['amp'],min=0)
 
     if initial_parameter_values==None:
         params.add('slope',value=-1e-3)
@@ -105,7 +118,7 @@ def do_fit(params,xdata,ydata,y_uncertainty):
     evaluated_fit_result = fit_model(fit_result.params, xdata)
     return evaluated_fit_result, fit_result
 
-def get_fit(data,lower_bound, upper_bound,peak_finder_parameters,number_peaks,initial_peak_width_guess,plot=False,axis=None):
+def get_fit(data,lower_bound, upper_bound,peak_finder_parameters,number_peaks,initial_peak_width_guess,plot=False,axis=None,threshold_params={}):
     histogram = np.histogram(data,bins = np.arange(0,4500))
     ydata = histogram[0]
     xdata = histogram[1]
@@ -119,7 +132,7 @@ def get_fit(data,lower_bound, upper_bound,peak_finder_parameters,number_peaks,in
 
     params = Parameters()
     params.add('num_peaks', value=number_peaks,vary=False)
-    add_parameters(params,initial_peak_parameters)
+    add_parameters(params,initial_peak_parameters,threshold_params=threshold_params)
 
     evaluated_fit_result,fit_result = do_fit(params,fit_xdata,fit_ydata,fit_yuncertainty)
 
