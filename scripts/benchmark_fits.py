@@ -50,6 +50,28 @@ FROZEN = ["gaussian", "background", "lower_exponential", "step_function",
           "fit_model", "residual_function", "get_histogram_data_uncertainty"]
 CHANGEABLE = ["get_initial_peak_parameters", "do_fit", "get_fit"]
 
+# The reference test pixels (docs/pipeline_roadmap.md): every fitting
+# change is judged by re-fitting THIS fixed list and comparing against
+# the recorded before-picture — successes must stay numerically
+# identical, failures should become successes. Known-good pixels and
+# low-gain cases supplied by AS (2026-08-04); the full low-gain
+# registry — reference only, low gain is NOT stationary — is
+# data/known_low_gain_pixels.csv.
+REFERENCE_PIXELS = [
+    # gold standard: clean fits, high statistics
+    (8622, 60), (8622, 1052),
+    (8631, 1067), (8631, 21),
+    (8637, 77), (8637, 1087), (8637, 1091),
+    # problem regimes
+    (8718, 99),    # weak 566 line: find_peaks misplaces peak 3
+    (8718, 95),    # low gain (0.44x): scout fires, pairs merge
+    (8626, 91),    # low gain, UDET
+    (8715, 1043),  # low gain, LDET
+    (8682, 1028),  # low gain + Cd source (activates with Cd recipes, 4.4)
+    (8622, 1051),  # LDET blend at standard trap: scrambled CE fit
+    (8718, 84),    # skirt pixel: threshold shoulder in the Auger window
+]
+
 
 def integrity_check() -> bool:
     """Reference untouched + frozen functions unedited. Returns ok."""
@@ -111,6 +133,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check-only", action="store_true",
                         help="run only the integrity checks (no fits)")
+    parser.add_argument("--reference-pixels", action="store_true",
+                        help="re-fit the fixed reference test pixel list "
+                             "(known-good pixels + known problem cases)")
     parser.add_argument("--runs", type=int, nargs="+", default=None)
     parser.add_argument("--segment", type=int, default=0)
     parser.add_argument("--pixels", type=int, nargs="+", default=None)
@@ -126,21 +151,28 @@ def main() -> None:
         sys.exit(1)
     if args.check_only:
         return
-    if not args.runs:
-        parser.error("--runs is required unless --check-only")
+    if not args.runs and not args.reference_pixels:
+        parser.error("--runs or --reference-pixels is required unless --check-only")
 
     with get_session() as session:
         query = (
             select(RunPixel, TrapFilterOutput)
             .join(TrapFilterOutput,
                   TrapFilterOutput.run_pixel_id == RunPixel.id)
-            .where(RunPixel.run_number.in_(args.runs),
-                   RunPixel.segment_index == args.segment,
+            .where(RunPixel.segment_index == args.segment,
                    TrapFilterOutput.label == args.tf_label)
             .order_by(RunPixel.run_number, RunPixel.pixel_number)
         )
-        if args.pixels:
-            query = query.where(RunPixel.pixel_number.in_(args.pixels))
+        if args.reference_pixels:
+            from sqlalchemy import or_, and_
+            query = query.where(or_(*[
+                and_(RunPixel.run_number == run,
+                     RunPixel.pixel_number == pixel)
+                for run, pixel in REFERENCE_PIXELS]))
+        else:
+            query = query.where(RunPixel.run_number.in_(args.runs))
+            if args.pixels:
+                query = query.where(RunPixel.pixel_number.in_(args.pixels))
         pairs = session.execute(query).all()
 
         rows, failed = [], False

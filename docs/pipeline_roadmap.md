@@ -169,18 +169,94 @@ untouched and the phase-0 benchmark stays identically green.
   remaining phase-4 item, deliberately deferred by AS until after the
   pipeline build.
 
-Still open in phase 4: **prediction-seeded initialization** (v2) — the
-model itself fits weak or unresolved peaks fine; what fails is
-find_peaks needing distinct maxima ('amp1' failures, and 8718 pixel
-99's visible-but-weak 566 line drifting to a wide background hump).
-Verified 2026-08-04: hand-seeding peak 3 at the two-anchor predicted
-position (frozen model + do_fit, no code changes) locked it onto the
-real line (implied 568.0 keV vs 565.85) — but naive seeding left a
-degenerate covariance, so the real initializer needs careful design
-(background init, bounds) and the benchmark gate. The same pathway is
-the blend strategy (Cd 87/88, short-trap merges) and the low-gain
-completion. Also open: restructuring `get_fit` into composable steps
-(benchmarked).
+### Phase 4 completion plan (agreed 2026-08-04)
+
+Ground truth driving it: the MODEL fits weak/unresolved peaks fine —
+what fails is find_peaks needing distinct maxima ('amp1' failures; 8718
+p99's visible 566 line drifting to a wide background hump). Verified by
+hand-seeding peak 3 at the two-anchor predicted position (frozen model +
+do_fit, zero code changes): it locked onto the real line (implied
+568.0 keV vs 565.85) but with a degenerate covariance — so the real
+initializer needs careful design. Every stage below: small, gated by
+scripts/benchmark_fits.py AND by AS's eyeball verification, one commit
+checkpoint each. The frozen functions are never touched; everything
+composes add_parameters/do_fit (changeable) at script level.
+
+- **4.1 Fixture set — DONE 2026-08-04** (no behavior change): reference
+  pixels wired into benchmark_fits.py (`--fixtures`), from AS's lists:
+  gold 8622p60/p1052, 8631p1067/p21, 8637p77/p1087/p1091; problem
+  regimes 8718p99 (weak 566), 8718p95 + 8626p91 + 8715p1043 (low gain),
+  8682p1028 (low gain + Cd, activates at 4.4), 8622p1051 (LDET blend),
+  8718p84 (threshold Auger). The full low-gain registry is
+  data/known_low_gain_pixels.csv — REFERENCE ONLY, because per AS:
+  **low gain is not stationary** (pixels drift in and out of it), so
+  the gain scout remains the detector and every scout-scaled fit is
+  now flagged "LOW GAIN — verify" for human eyes regardless of fit
+  quality. Also per AS: **the lower detector is physically different
+  hardware in 2025 vs 2026**, so the 2026 detector may develop its own
+  low-gain pixels — never assume the 2025 registry carries over.
+- **4.2 Second-chance fit with computed starting guesses — implemented
+  2026-08-04, awaiting AS visual verification.**
+  `fit_from_predicted_start` in scripts/fit_spectra.py: each peak is
+  seeded where its line must sit (NOMINAL_RELATION scaled by the scout
+  ratio), amplitude read off the histogram, recipe widths; the exact
+  frozen model runs via add_parameters + do_fit. It is the LAST attempt
+  — only spectra that fail every find_peaks attempt reach it — and a
+  health gate (converged + all centroid/width errors inside the CHECK
+  thresholds, rejection reasons printed) means a junk fit is never
+  stored. Plots are now on by default (fit_plots/, --no-plot to skip).
+  Results on the reference pixels (module identity: BENCHMARK PASSED,
+  all 14 previously-working fits bit-identical):
+  - **8718 p95 (the low-gain flagship): both fits now succeed** — the
+    CE fit resolves all six lines including both close pairs at 0.44x
+    gain (chi2r 1.88, healthy errors). Its Auger acceptance is
+    QUESTIONABLE (see below).
+  - 8715 p1043 CE now fits via the retry ladder (errors flagged CHECK).
+  - Still failing, correctly, with reasons printed: the LDET broad-
+    resolution spectra (8637 p1087/p1091-class, 8631 p1067, 8626 p91 CE)
+    — their peaks physically merge at standard trap settings, i.e. the
+    BLEND class for 4.4/4.5 — and windows containing empty bins (NaN
+    from zero uncertainty: 8718 p84 CE, several Augers).
+  Findings for AS review before 4.3:
+  1. The p95 Auger acceptance came from the nominal-window fallback
+     with nominal predictions on a low-gain pixel — the second broad
+     component eats background; extraction's anchor validation will
+     refuse the matches, but should predicted-start even run at nominal
+     windows when the scout fired?
+  2. The health gate rejected a scout-window Auger fit whose honest
+     errors (17% on centroid) may have been the physically right fit —
+     are the 5%/50% thresholds right for the Auger window?
+  3. Fits can "succeed" (lmfit success=True) with NO uncertainties at
+     all (singular covariance from merged peaks: 8637 p77/p1091) —
+     stored and CHECK-flagged today; extraction now skips
+     success=False fits, but stderr-less successes still flow until a
+     policy is chosen (4.3).
+- **4.3 Quality retry (AS decision point)**: optionally also try the
+  predicted init when a finder fit is CHECK-flagged, keeping the
+  better fit (error health + reduced chi2). Only if 4.2's results
+  justify it.
+- **4.4 Blend fitting (strategies B/C) + Cd/Ce recipes**: lmfit
+  parameter constraints layered AFTER add_parameters (expr ties:
+  energy-ratio-locked centroids, intensity-guided amplitudes) — the
+  frozen model never changes. Unlocks recipes for Cd-109 (87/88 pair)
+  and Ce-139 (164/166), and the low-gain merged pairs. Extraction:
+  constrained pairs store one adc_peak per line as usual; where a
+  single free peak spans a pair, strategy A (intensity-weighted derived
+  kev_peak) applies. Gate: Cd pixels (e.g. 8718 p106/107, currently
+  "no recipe") fit and match; AS verifies against spectra.
+- **4.5 Short-trap validation** (label short-trap-Fall2025, whole 2025
+  set available): fit 8622 p60 + p1051 at the short setting (the gain
+  scout rescales windows), compare LDET 554/566 resolution vs standard
+  — the pixel-1051 scrambled-fit test case. Gate: AS compares fits/
+  calibrations side by side; decision on default LDET treatment.
+- **4.6 Parallel physics checks (AS-driven)**: Auger long-dwell
+  comparison (9402 segs 78-80, 3 h each) once keV corrections exist;
+  identify the strong ~62 ADC line in 8718 skirt-pixel Auger windows;
+  ops answer on horizontal +0.55/0.6" -> the two-dwell stripe fix and a
+  plan regeneration.
+
+Dropped: restructuring get_fit into composable steps — everything above
+is achieved at script level without it.
 
 **RESOLVED (2026-08-04):** source assignment and position planning now
 pool per (holder, convention, FIELD) — field_key(run) captures magnet

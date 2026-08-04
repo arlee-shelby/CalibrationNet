@@ -26,8 +26,29 @@ Examples (see also README "Usage"):
 
 from sqlalchemy import select
 
-from .models import (ADCPeak, Calibration, IsotopeDecayEnergy, Run,
-                     RunPixel, SpectrumFit, TrapFilterOutput)
+from .models import (ADCPeak, Calibration, Isotope, IsotopeDecayEnergy,
+                     KeVPeak, Run, RunPixel, SpectrumFit, TrapFilterOutput)
+
+
+def line_energies(session, isotope_name):
+    """{'CE': [keV ascending], 'Auger': [...]} for one isotope, using
+    each line's newest generic NNDC value. Used by the fit workflow's
+    prediction-seeded initializer and by peak matching."""
+    lines = session.execute(
+        select(IsotopeDecayEnergy)
+        .join(IsotopeDecayEnergy.isotope)
+        .where(Isotope.name == isotope_name)
+    ).scalars().all()
+    groups = {}
+    for line in lines:
+        generic = [p for p in line.kev_peaks
+                   if p.source_id is None and p.origin == "nndc"]
+        if not generic:
+            continue
+        energy = max(generic, key=lambda p: p.created_at).energy_kev
+        prefix = line.label.split()[0]
+        groups.setdefault(prefix, []).append(energy)
+    return {prefix: sorted(values) for prefix, values in groups.items()}
 
 
 def _trap_filter(stmt, trap, tf_label):

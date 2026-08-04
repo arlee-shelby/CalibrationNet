@@ -78,6 +78,10 @@ def extract_fits(session, fits, groups, implied, tolerance_kev) -> tuple:
     freezes the peaks being replaced."""
     stored = flagged = 0
     for fit in fits:
+        if fit.success is False:
+            print(f"  {fit.label}: skipped (fit did not converge — "
+                  "success=False)")
+            continue
         prefix = LINE_GROUPS.get((fit.label or "").split("-")[0])
         group = groups.get(prefix, [])
         peaks = fitted_peaks(fit)

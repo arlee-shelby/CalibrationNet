@@ -29,10 +29,15 @@ from sqlalchemy import select
 
 import calibrationnet.fit_functions as fit_functions
 from calibrationnet.db import get_session
-from calibrationnet.fit_recipes import (RECIPES, SCOUT_ANCHORS,
-                                        peak_finder_ladder)
+from calibrationnet.fit_recipes import (NOMINAL_RELATION, RECIPES,
+                                        SCOUT_ANCHORS, peak_finder_ladder)
 from calibrationnet.models import RunPixel, SpectrumFit, TrapFilterOutput
+from calibrationnet.queries import line_energies
 from sqlalchemy.exc import IntegrityError
+
+# Which decay-line group a fit recipe targets, by its label prefix
+# ("ce-6peak" -> the CE lines): used to predict starting peak positions.
+LINE_GROUP_OF = {"ce": "CE", "auger": "Auger"}
 
 
 def gain_scout(data, anchor):
@@ -45,13 +50,98 @@ def gain_scout(data, anchor):
     return (lo + int(np.argmax(smoothed[lo:]))) / anchor["nominal_adc"]
 
 
-def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None):
-    """One fit, with windows scaled by the scouted gain ratio and a
-    bounded peak-finder retry ladder for outright failures. If the
-    scaled attempt exhausts the ladder, retries once at nominal windows
-    — so the scout can only ever ADD successes, never remove one.
+def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
+                             scout_ratio, relation, plot_path, title):
+    """Second-chance fit with COMPUTED starting guesses.
+
+    find_peaks needs distinct bumps to build the initial parameters;
+    when it can't supply them the fit never starts. Here each peak is
+    instead seeded where its decay line MUST sit — the nominal keV<->ADC
+    relation scaled by this pixel's gain ratio — with the amplitude read
+    off the histogram right there and the recipe's width guesses. Then
+    the EXACT same frozen model runs via add_parameters + do_fit.
+
+    The result is kept only if healthy (converged, all centroid/width
+    errors finite and inside the CHECK thresholds); otherwise None, and
+    the failure stands — a junk fit is never stored."""
+    from lmfit import Parameters
+
+    hist = np.histogram(data, bins=np.arange(0, 4500))
+    ydata, xdata = hist[0], hist[1]
+    yunc = fit_functions.get_histogram_data_uncertainty(ydata)
+    fx = xdata[bounds[0]:bounds[1]]
+    fy = ydata[bounds[0]:bounds[1]]
+    fu = yunc[bounds[0]:bounds[1]]
+
+    gain = relation["gain_kev_per_adc"]
+    constant = relation["constant_kev"]
+    smoothed = np.convolve(ydata, np.ones(5) / 5, mode="same")
+    init = {}
+    for i, energy in enumerate(energies, start=1):
+        adc = scout_ratio * (energy - constant) / gain
+        if not bounds[0] + 5 < adc < bounds[1] - 5:
+            print(f"    (predicted-start not applicable: {energy:.0f} keV "
+                  f"predicted at {adc:.0f} ADC, outside the window)")
+            return None
+        init[f"cen{i}"] = adc
+        init[f"sig{i}"] = widths[f"sig{i}"]
+        init[f"amp{i}"] = max(float(smoothed[int(round(adc))]), 5.0)
+
+    params = Parameters()
+    params.add("num_peaks", value=n_peaks, vary=False)
+    fit_functions.add_parameters(params, init)
+    try:
+        evaluated, result = fit_functions.do_fit(params, fx, fy, fu)
+    except Exception as exc:
+        print(f"    (predicted-start rejected: fit raised {exc})")
+        return None
+    if not result.success:
+        print("    (predicted-start rejected: did not converge)")
+        return None
+    for prefix, threshold in ERROR_THRESHOLDS.items():
+        for name, par in result.params.items():
+            if (name.startswith(prefix)
+                    and (par.stderr is None
+                         or par.stderr > threshold * abs(par.value))):
+                err = ("missing" if par.stderr is None
+                       else f"{par.stderr:.1f}")
+                print(f"    (predicted-start rejected: {name} error "
+                      f"{err} fails the health gate)")
+                return None
+
+    if plot_path is not None:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, axis = plt.subplots(figsize=(10, 6))
+        axis.plot(fx, fy)
+        axis.plot(fx, evaluated,
+                  label=f"Reduced $\\chi$: {result.redchi:.2f} "
+                        "(predicted start)")
+        axis.set_ylabel("Counts")
+        axis.set_xlabel("Energy (ADC)")
+        axis.legend()
+        axis.set_title(title)
+        fig.savefig(plot_path, dpi=120, bbox_inches="tight")
+        plt.close(fig)
+    return result
+
+
+def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
+               prediction=None):
+    """One fit. Attempt order:
+
+    1. the recipe's own peak-finder settings (windows scaled by the
+       scouted gain ratio when the pixel looks off-nominal);
+    2. progressively gentler peak-finder settings (the retry ladder);
+    3. the second-chance fit with computed starting guesses
+       (fit_from_predicted_start) when line predictions are available;
+    4. all of the above once more at nominal windows, if the scout had
+       scaled them.
+
+    A fit that succeeds at step 1 today is untouched by construction.
     Returns (MinimizerResult, bounds_used, config) — config records
-    exactly what produced the accepted fit."""
+    exactly which attempt produced the accepted fit."""
     bounds = (int(round(recipe["bounds"][0] * scout_ratio)),
               int(round(recipe["bounds"][1] * scout_ratio)))
     # At non-nominal gain everything in ADC shrinks together: the
@@ -94,16 +184,36 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None):
             fig.savefig(plot_path, dpi=120, bbox_inches="tight")
             plt.close(fig)
         config = {
+            "init": "find_peaks",
             "peak_finder_parameters": list(peak_finder),
             "initial_peak_width_guess": widths,
             "scout_ratio": scout_ratio,
             "attempt": attempt,
         }
         return result, bounds, config
+
+    # Second chance: computed starting guesses instead of find_peaks.
+    if prediction is not None:
+        energies, relation = prediction
+        result = fit_from_predicted_start(
+            data, bounds, recipe["n_peaks"], widths, energies,
+            scout_ratio, relation, plot_path,
+            plot_path.stem if plot_path is not None else recipe["label"])
+        if result is not None:
+            print("    (accepted via predicted-start initialization)")
+            config = {
+                "init": "predicted-start",
+                "initial_peak_width_guess": widths,
+                "scout_ratio": scout_ratio,
+                "prediction_relation": relation,
+                "attempt": "predicted-start",
+            }
+            return result, bounds, config
+
     if scout_ratio != 1.0:
-        print("    (scout-scaled windows exhausted the ladder — "
+        print("    (scout-scaled windows exhausted every attempt — "
               "falling back to nominal windows)")
-        return run_recipe(data, recipe, 1.0, plot_path)
+        return run_recipe(data, recipe, 1.0, plot_path, prediction)
     raise last_exc
 
 
@@ -145,10 +255,17 @@ def main() -> None:
     parser.add_argument("--isotope", default=None,
                         help="force this isotope's recipes instead of "
                              "using each pixel's assigned source")
-    parser.add_argument("--plot", type=Path, default=None, metavar="DIR",
-                        help="save a QA plot per fit into this directory")
+    parser.add_argument("--plot", type=Path, default=Path("fit_plots"),
+                        metavar="DIR",
+                        help="save a figure per fit here (default "
+                             "fit_plots/ — development policy: every fit "
+                             "gets a plot for visual verification)")
+    parser.add_argument("--no-plot", action="store_true",
+                        help="skip the figures")
     args = parser.parse_args()
 
+    if args.no_plot:
+        args.plot = None
     if args.plot is not None:
         args.plot.mkdir(parents=True, exist_ok=True)
 
@@ -166,6 +283,7 @@ def main() -> None:
         if args.pixels:
             query = query.where(RunPixel.pixel_number.in_(args.pixels))
         pairs = session.execute(query).all()
+        lines_by_isotope = {}
         if not pairs:
             raise SystemExit(
                 f"no '{args.tf_label}' trap filter outputs for run "
@@ -201,8 +319,19 @@ def main() -> None:
                           f"{scout_ratio:.3f}x nominal — windows scaled")
 
             pixel_fitted = 0
+            # Line energies for this isotope (once): they let the
+            # second-chance fit compute starting peak positions.
+            if isotope not in lines_by_isotope:
+                lines_by_isotope[isotope] = line_energies(session, isotope)
+            relation = NOMINAL_RELATION.get(isotope)
+
             try:
                 for recipe in recipes:
+                    group = LINE_GROUP_OF.get(recipe["label"].split("-")[0])
+                    energies = lines_by_isotope[isotope].get(group, [])
+                    prediction = None
+                    if relation is not None and len(energies) == recipe["n_peaks"]:
+                        prediction = (energies, relation)
                     plot_path = None
                     if args.plot is not None:
                         plot_path = args.plot / (
@@ -210,7 +339,8 @@ def main() -> None:
                             f"_pix{rp.pixel_number}_{recipe['label']}.png")
                     try:
                         result, bounds, config = run_recipe(
-                            data, recipe, scout_ratio, plot_path)
+                            data, recipe, scout_ratio, plot_path,
+                            prediction)
                     except Exception as exc:
                         print(f"  {recipe['label']}: FAILED after ladder "
                               f"({exc})")
@@ -236,6 +366,12 @@ def main() -> None:
 
                     report_lines, suspicious = centroid_report(result)
                     flag = "  <-- CHECK errors" if suspicious else ""
+                    if scout_ratio != 1.0:
+                        # Low gain is not stationary (pixels drift in and
+                        # out of it), so every scout-scaled fit is flagged
+                        # for human verification regardless of quality.
+                        flag += (f"  <-- LOW GAIN ({scout_ratio:.2f}x) "
+                                 "— verify")
                     print(f"  {recipe['label']}: reduced_chi2="
                           f"{result.redchi:.2f} success={result.success}"
                           f"{flag}")

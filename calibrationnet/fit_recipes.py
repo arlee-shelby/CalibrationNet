@@ -21,6 +21,15 @@ RECIPES = {
     ],
 }
 
+# Nominal ADC<->keV relation at standard trap settings, from the gold
+# standard calibration (run 8622 pixel 60, docs/example_outputs.md):
+# keV = constant + gain*ADC. Used ONLY to PREDICT initial peak
+# positions for the rescue initializer (scaled by the pixel's scout
+# ratio) — never as a calibration.
+NOMINAL_RELATION = {
+    "Bi-207": {"constant_kev": 28.98, "gain_kev_per_adc": 0.32809},
+}
+
 # Gain scout: where the isotope's strongest line sits at NOMINAL gain,
 # so a pixel's actual gain ratio can be estimated from its histogram
 # before fitting and the recipe windows scaled to match (low-gain pixels
