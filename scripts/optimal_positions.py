@@ -61,6 +61,7 @@ from calibrationnet.geometry import (
 from calibrationnet.models import Run, RunSegment, SourceInstallation
 from calibrationnet.positions import horizontal_limit
 from calibrationnet.pipeline.source_assignment import (
+    check_anchor_installation,
     compute_baselines,
     excess_map,
     fetch_all_counts,
@@ -371,18 +372,21 @@ def main() -> None:
 
     holders = {k: meta[k][1] for k in counts}
     slot_maps = {k: meta[k][0] for k in counts}
+    installations = {k: meta[k][2] for k in counts}
     keys = [k for k in sorted(counts)
             if None not in key_positions[k] and holders[k] is not None]
 
-    # Which (holder, convention, field) pool to plan for: the requested
-    # holder's pool with the most scanned segments. Field is part of the
-    # pool because the readback -> frame mapping depends on the magnet/
-    # ExB configuration — pools never mix field epochs.
+    # Which (installation, holder, convention, field) pool to plan for.
+    # A pool never mixes installations (a re-mounted tray can sit
+    # differently) or field epochs (the readback -> frame mapping
+    # depends on the magnet/ExB configuration). When more than one pool
+    # matches the requested holder, the choice is the physicist's, not
+    # a heuristic's: refuse and list them (--runs picks one).
     specs = {}
     for k in keys:
-        specs.setdefault((holders[k], conventions[k], fields[k]),
-                         []).append(k)
-    candidates = {s: ks for s, ks in specs.items() if s[0] == args.holder}
+        specs.setdefault((installations[k], holders[k], conventions[k],
+                          fields[k]), []).append(k)
+    candidates = {s: ks for s, ks in specs.items() if s[1] == args.holder}
     if not candidates:
         raise SystemExit(f"no scanned segments for holder {args.holder!r}; "
                          f"have {sorted(specs)}")
@@ -396,8 +400,18 @@ def main() -> None:
             raise SystemExit(f"no scanned segments from runs {args.runs} "
                              f"for holder {args.holder!r} — are their trap "
                              "filter outputs ingested?")
-    spec = max(candidates, key=lambda s: len(candidates[s]))
-    holder, convention, field = spec
+    if len(candidates) > 1:
+        options = "\n".join(
+            f"  installation {s[0]}, {s[2]} at {s[3]}: "
+            f"{len(ks)} segment(s), runs "
+            f"{min(k[0] for k in ks)}..{max(k[0] for k in ks)}"
+            for s, ks in sorted(candidates.items()))
+        raise SystemExit(
+            f"holder {args.holder!r} has {len(candidates)} separate pools "
+            f"— pools never combine across installations or fields, so "
+            f"pick one with --runs:\n{options}")
+    spec = next(iter(candidates))
+    installation, holder, convention, field = spec
     spec_keys = candidates[spec]
 
     lines = []  # everything printed is also saved to <stem>_summary.txt
@@ -406,14 +420,15 @@ def main() -> None:
         print(text)
         lines.append(text)
 
-    report(f"planning {holder} under {convention} at field {field} "
+    report(f"planning {holder} under {convention} at field {field}, "
+           f"installation {installation} "
            f"({len(spec_keys)} scanned segments"
            f"{f' from runs {sorted(set(args.runs))}' if args.runs else ''})")
-    for other, other_keys in sorted(candidates.items(), key=str):
-        if other != spec:
-            report(f"  note: {len(other_keys)} segment(s) also exist at "
-                   f"field {other[2]} — plan them with --runs or after "
-                   f"more scans make that pool the largest")
+
+    # The pool's anchor must come from the pool's own installation —
+    # a re-mounted tray can sit differently.
+    with get_session() as session:
+        check_anchor_installation(session, holder, convention, installation)
 
     # Same evidence preparation as assignment, restricted to this spec so
     # baselines stay within one bias/threshold epoch.
@@ -436,14 +451,14 @@ def main() -> None:
                               for det in ("upper", "lower")}
         frames, trends = locate_all_frames(
             excesses, key_positions, conventions, holders,
-            offsets_for_locate, fields=fields)
+            offsets_for_locate, fields=fields, installations=installations)
         offsets_by_det, refine_report = refine_slot_offsets(
             excesses, frames, offsets_by_det, spec_keys)
     offsets_for_locate = {spec + (det,): offsets_by_det[det]
                           for det in ("upper", "lower")}
     _frames, trends = locate_all_frames(
         excesses, key_positions, conventions, holders, offsets_for_locate,
-        fields=fields)
+        fields=fields, installations=installations)
     trend = trends[spec]
 
     if rounds:

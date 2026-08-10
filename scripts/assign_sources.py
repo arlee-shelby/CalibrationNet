@@ -40,6 +40,7 @@ from calibrationnet.pipeline.source_assignment import (
     MEMBER_RADIUS,
     VERIFY_RADIUS,
     assign_from_preds,
+    check_anchor_installation,
     compute_baselines,
     excess_map,
     fetch_all_counts,
@@ -85,15 +86,23 @@ def generate_review(label: str, force: bool) -> None:
             for k in counts
         }
         conventions = {k: segments[k].position_convention for k in counts}
-        slot_maps, holders = {}, {}
+        slot_maps, holders, installations = {}, {}, {}
         for k in counts:
-            slot_maps[k], holders[k] = installation_for(session, segments[k])
+            slot_maps[k], holders[k], installations[k] = installation_for(
+                session, segments[k])
         # Field configuration per segment: pools must never mix magnet/
         # ExB epochs (the readback->frame mapping depends on them).
         runs = {r.run_number: r for r in session.scalars(
             select(Run).where(Run.run_number.in_(
                 {k[0] for k in counts})))}
         fields = {k: field_key(runs[k[0]]) for k in counts}
+        # Every pool's anchor must come from the pool's own installation
+        # (a re-mounted tray can sit differently) — checked up front so
+        # a missing re-anchor fails loudly before any placement runs.
+        for inst, holder, conv in sorted({(installations[k], holders[k],
+                                           conventions[k]) for k in counts
+                                          if holders[k] is not None}):
+            check_anchor_installation(session, holder, conv, inst)
 
     unplaceable = sorted(k for k in counts
                          if key_positions[k][0] is None
@@ -110,32 +119,33 @@ def generate_review(label: str, force: bool) -> None:
     # source pixel's baseline nearly 8-fold, which was enough to pull
     # frames a whole pixel row off; the 110 A and 137 A epochs of 2026
     # are likewise kept apart.)
-    # Baselines pool per (holder, convention, field) — the SAME spec
-    # frames and trends group by. The holder must be in the key: two
-    # different tray installations can share a convention and field
-    # (first seen 2026-08-10, the 5-slot reinstall at inches-2026/137A
-    # alongside the 6-slot runs 9402+), and mixing their rasters shifts
-    # every pixel's median enough to move already-reviewed placements.
+    # Baselines pool per (installation, holder, convention, field) —
+    # the SAME spec frames and trends group by. The installation must
+    # be in the key: two mountings can share everything else (two trays
+    # at one convention+field — first seen 2026-08-10, the 5-slot
+    # reinstall alongside the 6-slot runs 9402+ — or one tray
+    # re-mounted later), and mixing their rasters shifts every pixel's
+    # median enough to move already-reviewed placements.
+    def pool_of(k):
+        return (installations[k], holders[k], conventions[k], fields[k])
+
     baselines = {}
-    for pool in set((holders[k], conventions[k], fields[k]) for k in keys):
-        subset = {k: counts[k] for k in keys
-                  if (holders[k], conventions[k], fields[k]) == pool}
+    for pool in set(pool_of(k) for k in keys):
+        subset = {k: counts[k] for k in keys if pool_of(k) == pool}
         baselines[pool] = compute_baselines(subset)
-        print(f"baselines for {pool[0]} {pool[1]} at {pool[2]}: "
-              f"{len(subset)} segment(s)")
+        print(f"baselines for {pool[1]} {pool[2]} at {pool[3]} "
+              f"(installation {pool[0]}): {len(subset)} segment(s)")
     excesses = {k: {det: excess_map(counts[k][det],
-                                    baselines[(holders[k],
-                                               conventions[k],
-                                               fields[k])][det])
+                                    baselines[pool_of(k)][det])
                     for det in ("upper", "lower")}
                 for k in keys}
     # Slot offsets are a property of the physical frame, so they only
     # depend on the convention's anchor, not on the segment — but the
-    # offsets dict is keyed by the full pool spec (incl. field) because
-    # frame location and trends group by it.
+    # offsets dict is keyed by the full pool spec (incl. installation
+    # and field) because frame location and trends group by it.
     offsets = {}
     for k in keys:
-        spec = (holders[k], conventions[k], fields[k])
+        spec = pool_of(k)
         for det in ("upper", "lower"):
             if spec + (det,) not in offsets:
                 offsets[spec + (det,)] = slot_offsets(
@@ -143,7 +153,7 @@ def generate_review(label: str, force: bool) -> None:
 
     frames, _trends = locate_all_frames(
         excesses, key_positions, conventions, holders, offsets,
-        fields=fields)
+        fields=fields, installations=installations)
 
     review_rows = []
     flagged = 0
@@ -152,8 +162,7 @@ def generate_review(label: str, force: bool) -> None:
         for det in ("upper", "lower"):
             labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
             tx, ty = frames[(k, det)]
-            slot_offset = offsets[(holders[k], conventions[k],
-                                   fields[k], det)]
+            slot_offset = offsets[pool_of(k) + (det,)]
             preds = {slot: (tx + slot_offset[slot][0],
                             ty + slot_offset[slot][1]) for slot in labels}
             excess = excesses[k][det]

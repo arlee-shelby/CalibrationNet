@@ -319,30 +319,74 @@ def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
 
 
 def installation_for(session, segment) -> tuple:
-    """({slot: (source_id, source_label)}, holder) for one segment.
+    """({slot: (source_id, source_label)}, holder, installation) for one
+    segment.
 
     The holder decides the frame geometry, so it travels with the slot map
-    rather than being inferred from the date."""
+    rather than being inferred from the date. The installation key — the
+    latest installed_on among the rows in force (ISO date string) —
+    identifies the MOUNTING period: touching any source means pulling the
+    tray, so any change to the installed set starts a new mounting, and
+    pools must never span mountings (a re-installed tray can sit
+    differently; AS design, 2026-08-10)."""
     day = (segment.start_time or segment.run.start_time).date()
     rows = session.execute(
         select(SourceInstallation.slot, Source.id, Source.label,
-               SourceInstallation.holder)
+               SourceInstallation.holder, SourceInstallation.installed_on)
         .join(Source, SourceInstallation.source_id == Source.id)
         .where(SourceInstallation.installed_on <= day)
         .where((SourceInstallation.removed_on.is_(None))
                | (SourceInstallation.removed_on > day))
     ).all()
-    holders = {h for _, _, _, h in rows}
+    holders = {h for _, _, _, h, _ in rows}
     if len(holders) > 1:
         raise ValueError(f"segment {segment.run_number}/"
                          f"{segment.segment_index} spans holders {holders}")
-    return ({slot: (sid, label) for slot, sid, label, _ in rows},
-            holders.pop() if holders else None)
+    installation = (max(inst for _, _, _, _, inst in rows).isoformat()
+                    if rows else None)
+    return ({slot: (sid, label) for slot, sid, label, _, _ in rows},
+            holders.pop() if holders else None,
+            installation)
+
+
+def check_anchor_installation(session, holder, convention, installation):
+    """A pool's anchor must come from the pool's OWN installation: a
+    re-mounted tray can sit differently, so an anchor verified under a
+    previous mounting must never pin a new one. Raises with the
+    re-anchoring instructions when it does not match (the same explicit
+    gap as a missing anchor — scan, eye-verify one segment's hit maps,
+    add the ANCHORS entry)."""
+    from calibrationnet.models import RunSegment
+    from calibrationnet.positions import anchor_for
+    from sqlalchemy import select as _select
+
+    anchor = anchor_for(holder, convention)
+    seg = session.execute(
+        _select(RunSegment).where(
+            RunSegment.run_number == anchor["run_number"],
+            RunSegment.segment_index == anchor["segment_index"])
+    ).scalar_one_or_none()
+    if seg is None:
+        raise ValueError(
+            f"the anchor for ({holder}, {convention}) points at run "
+            f"{anchor['run_number']} segment {anchor['segment_index']}, "
+            "which is not in the database — ingest it or fix the entry.")
+    _slots, _holder, anchor_installation = installation_for(session, seg)
+    if anchor_installation != installation:
+        raise ValueError(
+            f"the ({holder}, {convention}) anchor was verified under "
+            f"installation {anchor_installation} (run "
+            f"{anchor['run_number']}), but this pool's data is from "
+            f"installation {installation} — a re-mounted tray can sit "
+            "differently, so this pool needs its own anchor: raster a "
+            "run, eye-verify one segment's hit maps (scripts/"
+            "show_hitmap.py), and add the ANCHORS entry in "
+            "calibrationnet/positions.py.")
 
 
 def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
-                      holders: dict, offsets: dict, fields: dict = None
-                      ) -> tuple:
+                      holders: dict, offsets: dict, fields: dict = None,
+                      installations: dict = None) -> tuple:
     """Two-round frame location for every (segment key, detector).
 
     Round 1 locates each segment from its readback-based anchor prior;
@@ -350,11 +394,14 @@ def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
     segments sharing a pool spec and relocates with that tighter,
     data-driven prior. The spec is (holder, convention) — plus the
     field key when `fields` is given ({segment key: field_key(run)}),
-    because the mapping depends on the magnet/ExB configuration and
-    trends must never pool across field epochs. Returns (frames,
-    trends): frames keyed by (segment key, detector), trends by spec."""
+    because the mapping depends on the magnet/ExB configuration, and
+    plus the installation key when `installations` is given, because a
+    re-mounted tray can sit differently — trends must never pool
+    across field epochs or mountings. Returns (frames, trends): frames
+    keyed by (segment key, detector), trends by spec."""
     def spec_of(k):
-        base = (holders[k], conventions[k])
+        base = ((installations[k],) if installations is not None else ())
+        base += (holders[k], conventions[k])
         return base + ((fields[k],) if fields is not None else ())
 
     keys = list(excesses)

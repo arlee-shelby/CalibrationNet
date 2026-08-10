@@ -60,15 +60,33 @@ automatically, which applies only the non-CHECK rows.
 
 ## Pools, holders, fields
 
-Placements pool per **(holder, convention, field)** — baselines, frame
-trends, all of it. The holder became a REQUIRED part of the baseline
-key on 2026-08-10, when two different trays first shared a convention
-and field (the 5-slot reinstall, run 9464, alongside the 6-slot runs
-9402+ at inches-2026/137A): pooled together, their rasters shifted
-each other's medians enough to move 524 already-reviewed placements.
-With the holder in the key, the pre-existing pools reproduce exactly.
-The tray geometry is a property of the physical holder (anchors are
-keyed by holder + convention), and the field key —
+Placements pool per **(installation, holder, convention, field)** —
+baselines, frame trends, all of it. The rules, explicitly:
+
+- **What combines:** segments of ONE installation at ONE field
+  configuration. Nothing else, ever.
+- **What never combines:** anything across installations (a re-mounted
+  tray can sit differently — even the same tray, same convention, same
+  field), across readback conventions, or across field epochs. The
+  fall-2025 5-slot data and the 2026 5-slot reinstall share a physical
+  tray and NOTHING else.
+- **What carries over:** only the tray's slot GEOMETRY (inter-slot
+  offsets, a property of the physical holder) — never its mounting.
+  Every installation therefore needs its own eye-verified ANCHOR
+  (one hit-map-checked segment, an entry in
+  calibrationnet/positions.py), and assignment/planning refuse to run
+  a pool whose anchor comes from a different installation.
+
+The installation key is the latest `installed_on` among the rows in
+force (touching any source means pulling the tray, so any change to
+the installed set starts a new mounting period). History: the holder
+entered the baseline key on 2026-08-10, when two trays first shared a
+convention and field (the 5-slot reinstall, run 9464, alongside the
+6-slot runs 9402+ at inches-2026/137A) — pooled together, their
+rasters shifted each other's medians enough to move 524
+already-reviewed placements; the installation key replaced that same
+day as the general rule, verified to reproduce every pre-existing
+pool byte-identically. The field key —
 `source_assignment.field_key(run)`, e.g. `137/137A-exb2000` — captures
 the magnet currents and ExB voltage (binned at 100 V, so residual
 readings of a few volts don't split pools), because the readback→frame
@@ -77,12 +95,12 @@ horizontal scale ~5% and removed the upper-detector shear). Baselines
 and trends never mix field epochs; every review-CSV row carries its
 `field` for visibility. The pools on record:
 
-| epoch | holder | convention | field key |
-|---|---|---|---|
-| fall 2025 (runs ≤ 8865) | 5-slot | legacy-units | 137/137A-exb-1500 |
-| 2026-07-24 .. 07-30 (9326–9378) | 6-slot | inches-2026 | 110/110A-exb0 |
-| 9402–9415 (2026-07-31 →) | 6-slot | inches-2026 | 137/137A-exb2000 |
-| 9464+ (2026-08-10 →, 5-slot reinstall; anchor run 9464 seg 30) | 5-slot | inches-2026 | 137/137A-exb2000 |
+| epoch | installation | holder | convention | field key |
+|---|---|---|---|---|
+| fall 2025 (runs ≤ 8865) | 2025-10-03 | 5-slot | legacy-units | 137/137A-exb-1500 |
+| 2026-07-24 .. 07-30 (9326–9378) | 2026-07-21 | 6-slot | inches-2026 | 110/110A-exb0 |
+| 9402–9415 (2026-07-31 →) | 2026-07-21 | 6-slot | inches-2026 | 137/137A-exb2000 |
+| 9464+ (2026-08-10 →, 5-slot reinstall; anchor run 9464 seg 30) | 2026-08-04 | 5-slot | inches-2026 | 137/137A-exb2000 |
 
 **Why this matters (validation):** derived field-blind, the anchor run
 9326's own placements sat a full pixel column off its eye-verified

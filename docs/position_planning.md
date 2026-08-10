@@ -113,10 +113,34 @@ the hardware allows) would pick those up and pin the trend down over
 the wider range; after ingesting such a scan, the normal plan inherits
 the range automatically.
 
+## Which data the plan is built from (pools)
+
+A plan is fitted from exactly ONE pool: the segments of one
+**installation** at one **field configuration** (the same pooling rule
+source assignment uses — see docs/source_assignment.md for the full
+what-combines/what-never-combines rules). When the requested holder
+has more than one pool on record — e.g. the 5-slot tray's fall-2025
+data AND its 2026 reinstall — the script REFUSES and lists them,
+because that choice is the physicist's, not a heuristic's; pick the
+pool with `--runs` (e.g. `--runs 9464`). The pool's anchor must come
+from the pool's own installation — a re-mounted tray can sit
+differently — so planning a freshly re-installed tray asks for a new
+eye-verified anchor first.
+
 ## Outputs
 
-All written into `plans/`, named
-`optimal_positions_plan_<holder>_<convention>*` (plus any `--tag`):
+All written into `plans/`, with EVERY plan-changing flag encoded in
+the filename in a fixed order (defaults omitted), so variant plans sit
+side by side and are comparable at a glance:
+
+```
+optimal_positions_plan_5-slot_inches-2026                    # all defaults
+optimal_positions_plan_5-slot_inches-2026_runs9464_Bi-207    # --runs 9464 --isotope Bi-207
+optimal_positions_plan_..._runs9464_Bi-207_tol1.5            # + --tolerance-mm 1.5
+optimal_positions_plan_..._WHATIFlin30to36_WHATIFhor-0.75to0.75   # what-if (never for automation)
+```
+
+(plus any `--tag`, always last):
 
 | file | contents |
 |---|---|
@@ -130,12 +154,14 @@ All written into `plans/`, named
 | option | default | effect |
 |---|---|---|
 | `--holder` | current installation | which tray to plan for (the default queries `source_installations` for `removed_on IS NULL`) |
+| `--runs R ...` | none | build the plan from these runs' segments only — the way to pick ONE pool when the holder has several (see "Which data" above) |
+| `--isotope NAME` | none | coverage counts ONLY the slots whose installed source label starts with NAME (e.g. `Bi-207` → the four Bi slots of the 2026 5-slot installation; slot→source comes from the installation record). The other slots still help locate the frames — they just don't count as coverage. Use it to plan "well-centered data on every pixel from the Bi sources alone". |
 | `--label` | nabpy-standard | which trap filter outputs to count |
 | `--tolerance-mm` | 2.6 | "well centered" bar; tighter → more positions, cleaner data |
 | `--boundary-mm` | 4.5 | coverage bar; beyond it the source sits in a neighboring pixel |
 | `--step` | 0.05 | search grid step (each axis' own units) |
 | `--max-positions` | none | truncate the plan; positions are ordered by coverage gain, so this keeps the most valuable dwells |
-| `--assume-linear/-horizontal` | none | what-if range for scan planning (`_whatif` outputs) |
+| `--assume-linear/-horizontal` | none | what-if range for scan planning (outputs loudly named `_WHATIFlin…`/`_WHATIFhor…` — never feed these to the automation) |
 | `--no-refine` | off | use raw anchor-derived slot offsets (skip the data-driven refinement) |
 | `--exclude-rings N` | none | drop pixel rings N and beyond (both detectors) — they're greyed on the maps and the plan spends no positions on them |
 | `--min-gain M` | 1 | only keep positions adding ≥ M new pixels — counted as (detector, pixel) pairs over both detectors combined, so one new pixel on each detector is a gain of 2. Raising it drops the straggler-chasing tail — dramatically shorter plans — at the cost of the pixels those dwells existed for (listed as "coverable but below --min-gain" in the summary). The skipped stragglers are often exactly the hard-to-reach pixels; name the ones you need with `--must-include`. |

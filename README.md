@@ -340,13 +340,21 @@ reference pixels before adoption.
 
 ```bash
 python scripts/optimal_positions.py            # plan for the current tray
-python scripts/optimal_positions.py --holder 5-slot
+python scripts/optimal_positions.py --holder 5-slot --runs 9464
+python scripts/optimal_positions.py --holder 5-slot --runs 9464 --isotope Bi-207
 ```
 
 [scripts/optimal_positions.py](scripts/optimal_positions.py) turns the
 scan data into a **position plan**: the fewest stage positions that put
 a well-centered source over every reachable pixel, for the run
-automation to step through. It fits the readback→frame trend from all
+automation to step through. A plan is built from exactly ONE pool
+(one installation at one field configuration — the same rule source
+assignment uses); when a holder has several pools on record the script
+refuses and lists them, and `--runs` picks one. `--isotope Bi-207`
+restricts coverage to the slots holding that isotope's sources (the
+other slots still help locate the frames), and every plan-changing
+flag is encoded in the output filenames so variant plans sit side by
+side. Details: [docs/position_planning.md](docs/position_planning.md). It fits the readback→frame trend from all
 ingested scanned segments (so it improves with every ingest), refines
 the tray's slot offsets against the measured count centroids of every
 scanned segment (the anchor alone carries up to a pixel of quantization
