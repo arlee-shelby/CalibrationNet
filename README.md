@@ -204,6 +204,13 @@ hit the 7:59 wall limit.
 ./scripts/submit_trap_filter.sh run_list.txt /path/to/h5/ 100 10 1250 singles scan
 ```
 
+The run list is the script's first argument; the canonical file is
+**`run_list.txt` at the repo root** (tracked in git — it is the master
+list of runs the batch processing targets, one run number per line;
+appending a new run and re-running the script is the normal workflow,
+since already-ingested segments are always left out). Run the script
+from the repo root.
+
 - [scripts/submit_trap_filter.sh](scripts/submit_trap_filter.sh) asks the
   database which segments still need the setting (via
   [scripts/pending_segments.py](scripts/pending_segments.py)), writes a
