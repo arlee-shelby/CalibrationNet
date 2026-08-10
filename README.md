@@ -257,15 +257,28 @@ per segment, skipping whatever is already done.
 [scripts/fit_spectra.py](scripts/fit_spectra.py) pulls a run pixel's trap
 filter output, fits its peaks with the developed physics code
 ([calibrationnet/fit_functions.py](calibrationnet/fit_functions.py)),
-and stores every fit in spectrum_fits via `SpectrumFit.from_lmfit`.
-Which fits run comes from the pixel's assigned source: each isotope has
-recipes ([calibrationnet/fit_recipes.py](calibrationnet/fit_recipes.py):
-ADC window, peak count, peak-finder settings, initial widths), so Bi-207
+and stores every ACCEPTED fit in spectrum_fits via
+`SpectrumFit.from_lmfit`. Which fits run comes from the pixel's assigned
+source: each isotope has recipes
+([calibrationnet/fit_recipes.py](calibrationnet/fit_recipes.py):
+ADC window, peak count, peak-finder settings, starting widths), so Bi-207
 produces the 6-peak CE fit and the 2-peak Auger fit per output.
-Re-running replaces the fit with the same (output, label). Centroid
-errors above 5% (widths above 50%) are flagged `CHECK`; `--plot` saves a
-QA figure per fit. Storage details:
-[docs/fit_storage.md](docs/fit_storage.md).
+Every attempt must pass the quality check (`fit_is_good`: converged,
+all uncertainties present, centroid errors within 5% — 25% in the Auger
+window — width errors within 50%, reduced chi2 <= 10, and the
+peak-spacing check — fitted peaks must sit where the known line
+energies place them relative to the anchor peaks, so a fit that
+grabbed a threshold shoulder or background hump is rejected even when
+its errors look fine); a failing fit is retried with the recipe's
+retry starting widths (measured per peak from the data, then explicit
+sets) and progressively gentler peak-finder settings, then the
+predicted-start rescue. If every attempt fails,
+NOTHING is stored — a junk fit never enters the database — and pixels
+that had the statistics but still failed are listed in
+`fit_plots/fit_failures_summary.csv` for review. Re-running replaces
+the fit with the same (output, label). `--plot` saves a figure per fit
+(failures included, with the closest-miss attempt drawn). Storage
+details: [docs/fit_storage.md](docs/fit_storage.md).
 
 After fitting,
 [scripts/extract_adc_peaks.py](scripts/extract_adc_peaks.py) breaks each
@@ -286,14 +299,29 @@ becomes `is_current` per (run_pixel, type) unless `--no-current`.
 Re-running replaces the same-labelled calibration; peaks referenced by a
 calibration are frozen against re-extraction until it is rebuilt.
 
-The fit code is under a strict change policy
-([docs/pipeline_roadmap.md](docs/pipeline_roadmap.md)): the physics
-functions are frozen, and any change to the changeable ones must pass
+### Fitting code policy
+
+The fit MODEL is never modified. The seven physics functions in
+[calibrationnet/fit_functions.py](calibrationnet/fit_functions.py) —
+`gaussian`, `background`, `lower_exponential`, `step_function`,
+`fit_model`, `residual_function`, `get_histogram_data_uncertainty` —
+are frozen: they encode the developed physics and are not to be edited
+at all ([docs/pipeline_roadmap.md](docs/pipeline_roadmap.md) has the
+full policy). Everything tunable is an *input* to `get_fit`, defined in
+[calibrationnet/fit_recipes.py](calibrationnet/fit_recipes.py): the ADC
+windows, peak counts, peak-finder settings, starting widths and their
+retries, the quality-check thresholds, and the reduced-chi2 cap.
+Optimizing fits means optimizing those inputs and retrying — never
+changing the model.
+
+Any change to the fitting code must pass
 [scripts/benchmark_fits.py](scripts/benchmark_fits.py), which verifies a
 byte-identical reference copy
 ([calibrationnet/fit_functions_reference.py](calibrationnet/fit_functions_reference.py))
 plus frozen-function integrity, and compares live-vs-reference fit
-results (centroid pulls, chi2, success) over real data.
+results (centroid pulls, chi2, success) over real data — followed by
+AS's plot review of the regenerated `fit_plots/` figures on the
+reference pixels before adoption.
 
 ## Planning source positions
 

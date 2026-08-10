@@ -234,11 +234,13 @@ composes add_parameters/do_fit (changeable) at script level.
     109, 1017, 1018, 1031). Now every failure saves a data-only figure
     with the predicted line positions marked.
   - **Threshold peak centered at ~0 ADC** distorts the Auger window;
-    AS proposes adding a fixed-zero gaussian threshold component to
-    the fit model. Agreed it should help — that is AS's change to the
-    physics model; the workflow when it lands: benchmark old-vs-new on
-    the reference pixels, and if adopted, bless the new module as the
-    reference copy (new md5) with the version documented.
+    AS added an optional fixed-zero gaussian component to the model
+    (verified numerically identical when unused; comparison copy
+    updated). VERDICT after trials (2026-08-05): it did not help on the
+    tested windows (drives its amplitude to 0 or soaks degeneracy), and
+    AS's past experience agrees — extra parameters without fit-quality
+    gain. It STAYS AN UNUSED OPTION during development and is expected
+    to be REVERTED from the model before production.
   - Open confusions to resolve with the new complete plot set: the
     sharp ~60 ADC peak on 8718 p84/p85 (ties to the ~62 ADC mystery
     line), p1043's Auger window contents, p109's fit region, and p95's
@@ -260,10 +262,196 @@ composes add_parameters/do_fit (changeable) at script level.
   at 0 ADC. AS's model got its threshold component this same day
   (optional, bounded, comparison copy updated twice with same-numbers
   checks passing).
-- **4.3 Quality retry (AS decision point)**: optionally also try the
-  predicted init when a finder fit is CHECK-flagged, keeping the
-  better fit (error health + reduced chi2). Only if 4.2's results
-  justify it.
+
+  Implemented after AS's round-3 rulings (2026-08-05, this session,
+  awaiting AS plot review):
+  - **Statistics gate (C-3)**: STATS_GATE in fit_recipes.py — a pixel
+    is fitted only when its CE window (scaled by the scouted gain
+    ratio) has >= 20,000 counts AND a strongest-peak height > 200
+    above the window's median. Cutoffs chosen by AS from the test-case
+    numbers: 1017 in, 1018 and (deliberately, at standard trap) 1030
+    out. The CE window is the ONLY gatekeeper — a huge low-energy
+    signal can mean a WORSE pixel. Skipped pixels print the numbers
+    and save a data-only figure.
+  - **Suspect flag**: when a gated-in pixel's low-energy-window peak
+    exceeds its strongest CE peak, a SUSPECT warning prints — by the
+    literature intensities that signal cannot be Auger lines.
+  - **Auger only after CE**: the Auger recipe is skipped unless the CE
+    fit succeeded (it provides the anchors). Failure figures reverted
+    to the fit window only (plotting from 0 let the threshold peak
+    dominate the y-scale — AS ruling).
+  - **LDET testing moved to the short-trap outputs (AS ruling; UDET
+    stays nabpy-standard).** Probe first: short-trap gain scale is the
+    SAME as standard (976 K at ratio 1.00-1.04 of nominal 2885), so
+    scout + two-anchor relation work unchanged. The former LDET blend
+    class RESOLVES at short trap — all six CE lines separate, and the
+    two-anchor predictions sit on every structure.
+  - **Conditioned second-chance fit (C-5)**: the resolved spectra
+    still failed — a weak peak (few dozen counts, e.g. the 566-M line)
+    cannot determine its own tail shape or roam the window without
+    going degenerate (singular covariance; peak 3 drifting into
+    no-man's land or collapsing onto peak 2). New LAST rung of the
+    ladder, tried only after the plain predicted-start is rejected so
+    every previously accepted fit stays numerically identical: each
+    centroid bounded to its prediction +- half the gap to the
+    neighbouring prediction, and weak peaks' (amp < 15% of max) tail
+    shape n/h held at 0.2/0.01 — bounds and initial values only, the
+    frozen model untouched. Chosen over shape-tying (expr to the
+    strongest peak) by trial: fixed shape passed 5/6 failing pixels,
+    ties 4/6. Config records init="predicted-start-conditioned".
+  - **Short-trap LDET results**: CE now fits cleanly on 1017 (plain
+    rescue, 0.39x gain), 1087, 1091, 1030, 1031, 1043 (0.34x) — all
+    conditioned rescue, chi2r 1.2-2.3, healthy errors. Still open:
+    1067 (566 region too weak under the big K-976 tail — honest
+    failure), 1051/1052/1027 (finder fits stored WITH absurd errors
+    before the rescue can run — the CHECK-flag/quality-retry class,
+    4.3), 1018 (gated, correctly). Standard-trap regression: p60/p99
+    identical via recipe path (and correctly REFUSED overwrite —
+    frozen calibrations), p21/p77/p95-CE identical via plain rescue;
+    where the conditioned rung fired on p95's below-threshold Auger it
+    was correctly rejected.
+  - **OPEN for AS — the Auger recipe window at short trap**: LDET
+    short-trap offsets are ~+5 keV (vs ~+29 at standard), so the Auger
+    pair predicts to ~155-195 ADC — the 68 keV line lands OUTSIDE the
+    (20,180) window and the rescue correctly refuses. The finder then
+    fits threshold/mystery structures instead (1043: 15/26 ADC,
+    chi2r 6.0; 1031: 31/88 ADC — stored, physics-wrong, flagged for
+    review). Pb K X-rays (72.8/75.0/84.9 keV) would sit at ~205/212/242
+    ADC as SEPARATE peaks at short-trap resolution. AS to set the
+    short-trap Auger window (and peak count / X-ray handling — ties to
+    C-6).
+- **4.3 Quality retry — DONE 2026-08-05** (supersedes the original
+  "keep the better fit" sketch; AS decisions same day). Every fit
+  attempt now passes through ONE quality check
+  (fit_recipes.fit_is_good): converged, all uncertainties present,
+  centroid/width errors within the recipe thresholds, reduced chi2 <=
+  10 (per-recipe max_redchi; the bar AS's original scripts used). A
+  failing fit is RETRIED instead of stored-and-flagged, walking
+  fit_recipes.fit_attempts: the recipe exactly as written first (a
+  healthy pixel is untouched), then the recipe's retry_widths —
+  starting sigmas MEASURED per peak from the data (find_peaks width
+  output / 2.355; AS's insight that starting widths are the biggest
+  lever), then explicit sets — then the same width options at each
+  gentler peak-finder rung, then the 4.2 rescue (plain, conditioned),
+  then everything once more at nominal windows if the scout had
+  scaled. First attempt to pass wins; config records it (attempt +
+  actual widths). If EVERY attempt fails: nothing is stored, any
+  previously stored same-label fit is deleted (junk never kept), the
+  failure figure shows the data + the closest-miss attempt dashed,
+  and pixels that passed the statistics gate but failed all attempts
+  are listed in fit_plots/fit_failures_summary.csv (per-run detail via
+  --failures-detail). The CHECK flag is gone — a stored fit passes the
+  check by construction; LOW GAIN — verify remains. Results on the
+  reference pixels: 8622 p1051/p1052 short-trap junk (cen errors 4e3 /
+  4e6) replaced by healthy conditioned-rescue fits (chi2r 1.53/2.31);
+  p99's Auger rescued by the measured-width retry (its CE still passes
+  statistically with the wrong 566 — the peak-spacing check, next,
+  owns that class); 8718 p95's questionable Auger honestly removed.
+  Auger retry evidence so far supports AS: measured widths came out
+  5.7-8.4 where the recipe said 3.
+
+  **Agreed sequence after 4.3 (AS, 2026-08-05).** Until ALL of these
+  are done and vetted, nothing in spectrum_fits is final — it is
+  development output we are free to overwrite: (1) the PEAK-SPACING
+  check — **DONE 2026-08-05, same day** (see below); (1b) the AS-1
+  FILL-IN — **DONE 2026-08-05** (fill_in_seeds/fit_seeded, new attempt
+  stage between the finder ladder and the rescue: find_peaks found
+  SOME peaks -> keep them at their real positions, seed only the
+  missing ones at the line predictions shifted onto the found peaks,
+  same width options as the retries; first proof 8622 p109's Auger —
+  the finder's prominence escalation steps 3 peaks -> 1 there, every
+  pure rescue was degenerate at any width, fill-in fits it healthily,
+  chi2r 1.28, spacing check passed); (2) fit-range variation —
+  **window part DONE 2026-08-05**: the PREDICTED-WINDOW pass
+  (predicted_window in fit_spectra.py). When the pixel's predicted
+  line positions do NOT all fit inside the recipe window (short-trap
+  offsets push Auger 68 past (20,180); low gain can pull lines below
+  it), the whole attempt sequence runs once more on a window built
+  around the predictions: first line minus 1.5x the first gap, last
+  line plus 1.5x the last gap (the same margins the trusted recipe
+  windows have at standard settings), clamped above the threshold
+  region. Fires ONLY when needed, so healthy pixels pay nothing;
+  config records window="predicted window". Verified on 8622 p1052
+  short-trap Auger: the pass fires at (99,248) and the finder/rescue
+  aim at the right region — and the fits still fail HONESTLY, because
+  at LDET short-trap the Auger 56/68 + Pb X-ray region is ONE broad
+  unresolved hill (~60-250 ADC): a 2-free-peak model is
+  under-determined there. That is a MODEL decision for AS — 1-peak
+  blend fit, constrained pair (4.4 B/C), or intensity-weighted single
+  line (A) — not a window problem. Peak-count recipe variants remain
+  open alongside it. Development speed (AS, 2026-08-05): whole-run
+  fitting was far too slow for iteration — `fit_spectra.py --dev`
+  fits only data/dev_pixels.csv (one representative pixel per known
+  class per trap label, AS-editable), minutes instead of an hour;
+  additionally, attempts whose starting inputs (found peaks + width
+  guesses) are identical to an earlier attempt are SKIPPED — gentler
+  finder rungs usually land on the same peaks, so doomed blend pixels
+  stopped burning 16+ identical fits per window;
+  (3) blend model — **Auger constrained pair DONE 2026-08-05** (AS
+  ruling: an unresolved Auger structure is a blur of THE TWO AUGER
+  LINES ONLY — Pb X-rays explicitly excluded). fit_seeded(...,
+  pair_separation=...): cen2 tied to cen1 + the separation from the
+  pixel's own relation, sig2 tied to sig1, amplitudes free (NNDC has
+  no Auger split), tail shapes free (tying n/h was tried and made the
+  width error blow up). Constraints layered AFTER add_parameters —
+  frozen model untouched (4.4 strategy B). Runs for 2-peak recipes
+  after the fill-in (a genuinely resolved pair still gets free
+  positions first) and before the rescue. Measured on 8622 p1052
+  short-trap: the tie shrinks the blur's centroid error 363 -> 67 ADC
+  (40% of value). **AS ruling (2026-08-05, after plot review): SAVE
+  blur fits — their reduced chi2 is good and the values stable, only
+  softly determined. The auger bars are now cen 75% / sig 150%**
+  (short-trap 1052 stores at cen 40%; 1055 at cen 67% + sig 127%).
+  Every figure's legend states how its fit was made (e.g.
+  "constrained pair, predicted window"), so blur fits are
+  recognizable at a glance. Whether soft auger points enter a
+  calibration is decided downstream — expressly NOT settled here.
+  OPEN observation for AS: both p1048's resolved pair (+8 ADC) and
+  p1052's blur (+13) sit systematically ABOVE the CE-derived
+  two-anchor predictions — possibly the Auger-vs-CE energy-loss
+  offset difference. CE blends (LDET standard trap) remain the open
+  4.4 item; (4) the short-trap Auger window numbers (AS) — largely
+  superseded by the predicted-window pass; **AS ruling 2026-08-05:
+  UDET is NEVER calibrated with the short trap — UDET pixels are not
+  fitted at short-trap labels at all (LDET_ONLY_TF_LABELS in
+  fit_spectra.py)**; (5) LOW-GAIN VALIDATION (AS,
+  2026-08-05): development runs on 8622 ONLY, which has NO low-gain
+  pixels — before anything is final, validate against a low-gain run
+  (8718 UDET p95 at standard trap, 8715 LDET p1043 at short trap);
+  (6) CLEAN SLATE: delete all calibrations (un-freezes the fits),
+  then all spectrum_fits, then run the vetted fitting fresh — the
+  database then holds only good, vetted fits and the calibrations
+  built from them. (Stale development fits of excluded / gate-skipped
+  pixels — e.g. 8626 p91's Auger, chi2r 74 — sit in the table until
+  that wipe. Development-frozen pixels — 8622 p60/67/80/99/109/1051
+  hold calibrations from the phase-3 validation — print REFUSED and
+  keep their old rows until then too; their figures and printed
+  values are still current.)
+
+  **Peak-spacing check — DONE 2026-08-05**
+  (fit_recipes.peak_spacing_check, last step of fit_is_good; per-recipe
+  spacing_tolerance, default 0.35). Fits with >= 3 peaks are checked
+  gain-free: a line through the two anchor peaks (recipe anchor_peaks —
+  CE 482 K and 976 K, the same anchors extraction uses) predicts every
+  other peak's position from the line energies; each may be off by at
+  most 0.35 of the smallest neighbouring predicted gap. 2-peak fits
+  use the pixel's own two-anchor keV<->ADC relation (the one that
+  seeds the rescue): each peak within 0.35 of the pair's predicted
+  separation. Tolerance chosen from the reference pixels: correct
+  fits sit <= 26% of a gap off the pattern, wrong peaks 40%+.
+  Verified same-day: 8718 p99's CE 566 — the roadmap's flagship —
+  is FIXED (attempt 1 spacing-rejected at 58.9 ADC off; the
+  measured-width retry locks cen3=1638.2+-2.6, matching p60, chi2r
+  1.24; still REFUSED overwrite while frozen); 8637 p77's peak-6
+  regression caught (off 14.6, allowed 12.7) and the measured-x-2
+  retry recovers the correct fit (cen6=3114.5, chi2r 1.43); the
+  short-trap LDET Auger fits of threshold/mystery structures (8718
+  p1030, 8719 p1017, 8715 p1043-class) now rejected with the printed
+  reason showing predicted vs fitted positions — junk removed, nothing
+  stored; 8622 p1051's merged 554/566 CE honestly rejected (off 14.7,
+  allowed 12.7 — genuinely blended, a 4.4/range-work case); healthy
+  fits (p60 bit-identical, p1052, p1087, p1091, p1043 CE, p95 CE,
+  8718/8719 p1017 CE) all pass unchanged.
 - **4.4 Blend fitting (strategies B/C) + Cd/Ce recipes**: lmfit
   parameter constraints layered AFTER add_parameters (expr ties:
   energy-ratio-locked centroids, intensity-guided amplitudes) — the

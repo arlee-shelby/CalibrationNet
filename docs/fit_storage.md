@@ -101,8 +101,13 @@ session.add(fit)
   that tells you what row 29 of the covariance means.
 - **`covariance`** — `results.covar` as a 33×33 nested list, ordered
   exactly by `var_names`.
-- **`config`** — the two inputs above that have no dedicated column, so
-  the fit can be reproduced exactly.
+- **`config`** — the inputs above that have no dedicated column, so
+  the fit can be reproduced exactly. Production fits (fit_spectra.py)
+  record more keys there: `init` (`"find_peaks"` or a predicted-start
+  rescue mode), `attempt` (which retry won, e.g. `"recipe"` or
+  `"prominence=7, widths: measured"` — the quality-retry ladder,
+  roadmap 4.3), the actual `initial_peak_width_guess` values that
+  attempt used, and `scout_ratio` (the window scale actually fitted).
 
 ### Why `config` matters
 

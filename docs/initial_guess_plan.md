@@ -23,7 +23,13 @@ basis for discussion.
 Also: 8718 p99 STILL misses its weak 566 line — its find_peaks fit
 passes every health check, so by design no second chance runs. Fixing
 this class requires the quality-retry (formerly "4.3"), now clearly
-wanted.
+wanted. **STATUS 2026-08-05: the quality-retry is IMPLEMENTED**
+(roadmap 4.3: quality check on every attempt + retry starting widths
+measured from the data + junk never stored). p99's Auger is fixed by
+it; its CE fit passes every statistical check with the wrong 566, so
+that class now waits on the PEAK-SPACING check (fitted peak gaps in
+the same proportions as the known line-energy gaps), agreed as the
+next step.
 
 ## Candidate strategies
 
@@ -92,8 +98,16 @@ explain.
 
 1. C-3 + C-4 (stop fitting the unfittable; no fit-logic changes),
 2. C-1 (fix the prediction backbone) + C-2 (predict blends, not lines),
-3. AS-1 (fill-in as the second pass proper, using C-1/C-2 predictions),
-4. quality-retry for healthy-but-incomplete fits (the p99 class),
+3. AS-1 (fill-in as the second pass proper, using C-1/C-2 predictions)
+   — **DONE 2026-08-05** (fill_in_seeds/fit_seeded in fit_spectra.py:
+   found peaks kept at their real positions, missing peaks seeded at
+   the line predictions shifted onto the found ones, width options as
+   in the normal retries; first proof: 8622 p109's Auger, where the
+   finder's prominence escalation steps 3 peaks -> 1 and every pure
+   rescue was degenerate — fill-in fits it healthily, chi2r 1.28),
+4. quality-retry for healthy-but-incomplete fits (the p99 class) —
+   **DONE 2026-08-05** (roadmap 4.3: retry starting widths measured
+   from the data, one quality check, junk never stored),
 5. AS-3 quick trial on the reference pixels; AS-2 only if still needed,
 6. C-5 conditioning fixes as encountered,
 7. C-6 X-rays as soon as AS provides the values (verifiable against
@@ -102,13 +116,14 @@ explain.
 Each step: same-numbers check on the reference pixels + AS plot review
 before the next.
 
-## Questions for AS
+## AS decisions (2026-08-05)
 
-1. X-ray lines: can you provide NNDC energies/intensities per isotope?
-2. Statistics gate: what minimum counts (or signal/background) makes a
-   window worth fitting?
-3. Pixel 91 (zero gain): exclude from fitting entirely, or is there a
-   treatment worth attempting?
-4. Do you agree with the proposed order — and specifically with running
-   AS-1 (your fill-in idea) as the main second pass, with AS-2/AS-3
-   held as follow-ups?
+1. X-rays: DEFERRED — for Bi-207 they are too weak to matter; they get
+   stronger for Sn/Cd, so C-6 returns when those isotopes are fitted.
+2. Statistics gate: AS will set the cutoff by inspecting the metric
+   values for the existing test cases (table provided by the pipeline).
+3. Pixel 91: EXCLUDED from fitting for now (data/excluded_pixels.csv).
+4. Order approved with amendments: C-4 REJECTED (the hardware threshold
+   cannot be reliably read off the histogram); AS-2 skipped; AS-3 kept
+   as a quick trial; C-1 + C-2 approved as the prediction fix; AS-1 as
+   the main second pass; quality-retry after that.
