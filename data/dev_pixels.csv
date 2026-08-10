@@ -1,10 +1,10 @@
 tf_label,pixel,why
 nabpy-standard,60,gold standard UDET (frozen - prints identity check)
 nabpy-standard,109,noisy auger - the fill-in class
-nabpy-standard,1048,LDET at standard trap (rescue-accepted CE; no LDET std pixel passes attempt 1 - blend class)
-nabpy-standard,1055,LDET blend class (merged 554/566)
+nabpy-standard,1048,LDET at standard trap (rescue-accepted CE; 2025 LDET resolution is an oddball)
+nabpy-standard,1055,LDET merged-pair class (2025 oddball - honest failures expected)
 nabpy-standard,117,statistics-gate skip
-short-trap-Fall2025,1051,spacing-check rejection (merged pair)
-short-trap-Fall2025,1052,healthy LDET CE + blended auger (blur model case)
+short-trap-Fall2025,1051,spacing-check rejection (merged pair; 2025 oddball)
+short-trap-Fall2025,1052,healthy LDET CE; auger region unresolved (2025 oddball - honest failure)
 short-trap-Fall2025,1048,resolved auger pair (how good short-trap augers look)
-short-trap-Fall2025,1055,auger window starts too low without the predicted window + blend
+short-trap-Fall2025,1055,predicted-window case; auger blur fails honestly (2025 oddball)

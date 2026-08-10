@@ -43,14 +43,12 @@ RECIPES = {
                            {"sig1": 8, "sig2": 8}),
              # Low-statistics window sitting on the threshold tail:
              # honest centroid errors run well past the default 5% bar
-             # (AS, 2026-08-04: raised to 25%; AS, 2026-08-05: raised
-             # to cen 75% / sig 150% so constrained-pair BLUR fits are
-             # SAVED — their reduced chi2 is good and the values are
-             # stable, only softly determined: short-trap 1052 cen at
-             # 40%, 1055 cen at 67% and sig at 127%. Whether such soft
-             # points enter a calibration is decided downstream, not
-             # here).
-             error_thresholds={"cen": 0.75, "sig": 1.50}),
+             # (AS, 2026-08-04), so the quality-check bar is 25% here.
+             # (Briefly 75%/150% during 2026-08 blend development —
+             # reverted with the blends: AS group ruling 2026-08-10,
+             # NO blend fitting ever, all peaks fit individually, same
+             # fit function as the future simulation fits.)
+             error_thresholds={"cen": 0.25, "sig": 0.50}),
     ],
 }
 

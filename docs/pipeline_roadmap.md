@@ -376,10 +376,10 @@ composes add_parameters/do_fit (changeable) at script level.
   aim at the right region — and the fits still fail HONESTLY, because
   at LDET short-trap the Auger 56/68 + Pb X-ray region is ONE broad
   unresolved hill (~60-250 ADC): a 2-free-peak model is
-  under-determined there. That is a MODEL decision for AS — 1-peak
-  blend fit, constrained pair (4.4 B/C), or intensity-weighted single
-  line (A) — not a window problem. Peak-count recipe variants remain
-  open alongside it. Development speed (AS, 2026-08-05): whole-run
+  under-determined there. That was a MODEL decision for AS — settled
+  2026-08-10: NO blend fitting of any kind (see the ruling under
+  4.3/4.4); the Fall-2025 LDET data is an oddball not to build
+  around. Peak-count recipe variants remain open. Development speed (AS, 2026-08-05): whole-run
   fitting was far too slow for iteration — `fit_spectra.py --dev`
   fits only data/dev_pixels.csv (one representative pixel per known
   class per trap label, AS-editable), minutes instead of an hour;
@@ -387,30 +387,27 @@ composes add_parameters/do_fit (changeable) at script level.
   guesses) are identical to an earlier attempt are SKIPPED — gentler
   finder rungs usually land on the same peaks, so doomed blend pixels
   stopped burning 16+ identical fits per window;
-  (3) blend model — **Auger constrained pair DONE 2026-08-05** (AS
-  ruling: an unresolved Auger structure is a blur of THE TWO AUGER
-  LINES ONLY — Pb X-rays explicitly excluded). fit_seeded(...,
-  pair_separation=...): cen2 tied to cen1 + the separation from the
-  pixel's own relation, sig2 tied to sig1, amplitudes free (NNDC has
-  no Auger split), tail shapes free (tying n/h was tried and made the
-  width error blow up). Constraints layered AFTER add_parameters —
-  frozen model untouched (4.4 strategy B). Runs for 2-peak recipes
-  after the fill-in (a genuinely resolved pair still gets free
-  positions first) and before the rescue. Measured on 8622 p1052
-  short-trap: the tie shrinks the blur's centroid error 363 -> 67 ADC
-  (40% of value). **AS ruling (2026-08-05, after plot review): SAVE
-  blur fits — their reduced chi2 is good and the values stable, only
-  softly determined. The auger bars are now cen 75% / sig 150%**
-  (short-trap 1052 stores at cen 40%; 1055 at cen 67% + sig 127%).
-  Every figure's legend states how its fit was made (e.g.
-  "constrained pair, predicted window"), so blur fits are
-  recognizable at a glance. Whether soft auger points enter a
-  calibration is decided downstream — expressly NOT settled here.
-  OPEN observation for AS: both p1048's resolved pair (+8 ADC) and
-  p1052's blur (+13) sit systematically ABOVE the CE-derived
-  two-anchor predictions — possibly the Auger-vs-CE energy-loss
-  offset difference. CE blends (LDET standard trap) remain the open
-  4.4 item; (4) the short-trap Auger window numbers (AS) — largely
+  (3) blend model — **REVERTED IN FULL, AS group ruling 2026-08-10:
+  NO blend/tied-peak fitting of any kind, for any source, peaks, or
+  data — including the Bi-207 Auger pair.** Reasons: (a) these fits
+  must use the SAME fit function as the future SIMULATION fits, and
+  in simulation every peak is resolved and fitted individually (e.g.
+  Sn-113's 387/391 always resolve there); (b) the Fall-2025 LDET
+  data, whose extreme resolution problems motivated the blends, is an
+  ODDBALL — a separate case the fitting routines and pipeline must
+  NOT be built around; the 2026 LDET data does not show it. History
+  for the record: an Auger constrained pair (cen2/sig2 tied,
+  2026-08-05) and general blend_groups (2026-08-10) were built,
+  verified (they fixed the 2025-LDET blur pixels; intensity-tied
+  amplitudes turned p1055-std CE from FAIL to PASS at identical
+  chi2), and then removed the same day per this ruling. The auger
+  error thresholds, briefly cen 75% / sig 150% to save blur fits,
+  are back at cen 25% / sig 50%. Fits stored by the blend paths were
+  removed when their pixels were refit. Still-open observation for
+  AS (independent of blends): short-trap auger structures sat
+  systematically +8..13 ADC ABOVE the CE-derived two-anchor
+  predictions — possibly the Auger-vs-CE energy-loss offset
+  difference; (4) the short-trap Auger window numbers (AS) — largely
   superseded by the predicted-window pass; **AS ruling 2026-08-05:
   UDET is NEVER calibrated with the short trap — UDET pixels are not
   fitted at short-trap labels at all (LDET_ONLY_TF_LABELS in
@@ -452,15 +449,17 @@ composes add_parameters/do_fit (changeable) at script level.
   allowed 12.7 — genuinely blended, a 4.4/range-work case); healthy
   fits (p60 bit-identical, p1052, p1087, p1091, p1043 CE, p95 CE,
   8718/8719 p1017 CE) all pass unchanged.
-- **4.4 Blend fitting (strategies B/C) + Cd/Ce recipes**: lmfit
-  parameter constraints layered AFTER add_parameters (expr ties:
-  energy-ratio-locked centroids, intensity-guided amplitudes) — the
-  frozen model never changes. Unlocks recipes for Cd-109 (87/88 pair)
-  and Ce-139 (164/166), and the low-gain merged pairs. Extraction:
-  constrained pairs store one adc_peak per line as usual; where a
-  single free peak spans a pair, strategy A (intensity-weighted derived
-  kev_peak) applies. Gate: Cd pixels (e.g. 8718 p106/107, currently
-  "no recipe") fit and match; AS verifies against spectra.
+- **4.4 Blend fitting (strategies B/C) — DEAD, AS group ruling
+  2026-08-10: NO blend/tied-peak fitting of any kind** (same fit
+  function as the future simulation fits, where every peak resolves;
+  see the ruling under 4.3 above). Cd-109 / Ce-139 recipes are still
+  wanted, but with every peak fitted individually and free. Where a
+  measured spectrum genuinely cannot resolve a pair (Cd's
+  87.32+87.94), the treatment happens at EXTRACTION level, not fit
+  level — strategy A (a single free fitted peak matched to an
+  intensity-weighted derived kev_peak) remains available and does not
+  touch the fit function. AS to decide when those recipes are
+  written.
 - **4.5 Short-trap validation** (label short-trap-Fall2025, whole 2025
   set available): fit 8622 p60 + p1051 at the short setting (the gain
   scout rescales windows), compare LDET 554/566 resolution vs standard

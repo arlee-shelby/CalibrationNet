@@ -328,22 +328,17 @@ def fill_in_width_options(recipe, found_sigmas, scout_ratio):
             yield widths, f"widths: {note}"
 
 
-def fit_seeded(data, bounds, n_peaks, seeds, widths, tag,
-               pair_separation=None):
+def fit_seeded(data, bounds, n_peaks, seeds, widths, tag):
     """Fit with GIVEN starting centroids: amplitudes read off the
     smoothed histogram at each seed, then the exact frozen model via
     add_parameters + do_fit (the same core the predicted-start rescue
     uses). Returns the lmfit result, or None with the reason printed.
 
-    pair_separation (2-peak fits only) turns this into the BLEND model
-    (AS ruling 2026-08-05: the unresolved Auger structure is a blur of
-    the two Auger lines ONLY — no Pb X-rays): the pair is fitted as one
-    unit with the same width and its separation FIXED by the pixel's
-    own keV<->ADC relation, so the fit can no longer slide one peak
-    around inside the blur (that slide is what made the free pair's
-    centroid errors meaningless). Constraints are layered AFTER
-    add_parameters — the frozen model is untouched (roadmap 4.4,
-    strategy B). Amplitudes stay free: NNDC reports no Auger split."""
+    Every peak is always fitted individually and completely free —
+    NO blend/tied-peak fitting of any kind (AS group ruling,
+    2026-08-10): these fits must use the same fit function as the
+    future SIMULATION fits, and in simulation every peak is resolved
+    and fitted individually."""
     from lmfit import Parameters
 
     hist = np.histogram(data, bins=np.arange(0, 4500))
@@ -368,9 +363,6 @@ def fit_seeded(data, bounds, n_peaks, seeds, widths, tag,
     params = Parameters()
     params.add("num_peaks", value=n_peaks, vary=False)
     fit_functions.add_parameters(params, init)
-    if pair_separation is not None:
-        params["cen2"].expr = f"cen1 + {pair_separation:.4f}"
-        params["sig2"].expr = "sig1"
     try:
         _evaluated, result = fit_functions.do_fit(params, fx, fy, fu)
     except Exception as exc:
@@ -481,17 +473,18 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
     4. the fill-in (AS-1): find_peaks found SOME peaks — keep them,
        seed only the missing ones from the line predictions shifted
        onto the found peaks, and try the same width options;
-    5. for 2-peak recipes, the CONSTRAINED PAIR (the blend model):
-       the two lines fitted as one blurred unit — same width,
-       separation fixed by the pixel's own relation (fit_seeded);
-    6. the predicted-start rescue (plain, then conditioned): every
+    5. the predicted-start rescue (plain, then conditioned): every
        peak seeded where the known lines are predicted to sit;
-    7. when the predicted line positions do NOT all fit inside the
+    6. when the predicted line positions do NOT all fit inside the
        recipe window (short-trap Auger offsets, low gain), everything
        once more on the PREDICTED window — built around where the
        pixel's own relation puts the lines (predicted_window above);
-    8. if the gain scout had scaled the windows, everything once more
+    7. if the gain scout had scaled the windows, everything once more
        at the nominal windows (the scout can only ADD successes).
+
+    Every peak is fitted individually and free — NO blend/tied-peak
+    fitting of any kind (AS group ruling, 2026-08-10: same fit
+    function as the future simulation fits, where all peaks resolve).
 
     Attempts whose starting inputs (found peaks + width guesses) are
     identical to an earlier attempt are skipped — gentler peak-finder
@@ -571,8 +564,7 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
             if note != "recipe" or window_tag != "recipe window":
                 print(f"    (accepted on retry: {fig_note})")
             if plot_path is not None:
-                # Every figure states HOW its fit was made (AS request:
-                # blend fits must be recognizable on the plot).
+                # Every figure states HOW its fit was made (AS request).
                 save_fit_figure(data, bounds, result, plot_path,
                                 note=fig_note)
             config = {
@@ -626,54 +618,6 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                         "prediction_relation": prediction[1],
                         "prediction_relation_source": prediction[3],
                         "prediction_ratio": prediction[2],
-                        "scout_ratio": window_scale,
-                    }
-                    return result, bounds, config
-
-        # ---- constrained pair (2-peak recipes): the blend model ----
-        # AS ruling 2026-08-05: an unresolved Auger structure is a blur
-        # of the two Auger lines ONLY (no Pb X-rays). Same width, the
-        # separation fixed by the pixel's own relation — removes the
-        # slide-inside-the-blur degeneracy that made the free pair's
-        # centroid errors meaningless. Tried after the fill-in so a
-        # genuinely resolved pair still gets free peak positions first.
-        if prediction is not None and recipe["n_peaks"] == 2:
-            energies, relation, pred_ratio, rel_tag = prediction
-            preds = [pred_ratio * (e - relation["constant_kev"])
-                     / relation["gain_kev_per_adc"] for e in energies]
-            separation = preds[1] - preds[0]
-            if (separation > 0
-                    and bounds[0] + 5 < preds[0]
-                    and preds[1] < bounds[1] - 5):
-                for widths, width_note in fill_in_width_options(
-                        recipe, {}, window_scale):
-                    n_attempts += 1
-                    note = ("constrained pair"
-                            + (f", {width_note}" if width_note else ""))
-                    result = fit_seeded(data, bounds, 2, preds, widths,
-                                        note, pair_separation=separation)
-                    if result is None:
-                        continue      # reason already printed
-                    ok, reason = fit_is_good(result, recipe, prediction)
-                    if not ok:
-                        print(f"    ({note}: rejected — {reason})")
-                        remember_rejected(result, bounds, note)
-                        continue
-                    fig_note = (note if window_tag == "recipe window"
-                                else f"{note}, {window_tag}")
-                    print(f"    (accepted via {fig_note})")
-                    if plot_path is not None:
-                        save_fit_figure(data, bounds, result, plot_path,
-                                        note=fig_note)
-                    config = {
-                        "init": "constrained-pair",
-                        "attempt": note,
-                        "window": window_tag,
-                        "pair_separation_adc": round(separation, 4),
-                        "initial_peak_width_guess": widths,
-                        "prediction_relation": relation,
-                        "prediction_relation_source": rel_tag,
-                        "prediction_ratio": pred_ratio,
                         "scout_ratio": window_scale,
                     }
                     return result, bounds, config
