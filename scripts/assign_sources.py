@@ -110,15 +110,22 @@ def generate_review(label: str, force: bool) -> None:
     # source pixel's baseline nearly 8-fold, which was enough to pull
     # frames a whole pixel row off; the 110 A and 137 A epochs of 2026
     # are likewise kept apart.)
+    # Baselines pool per (holder, convention, field) — the SAME spec
+    # frames and trends group by. The holder must be in the key: two
+    # different tray installations can share a convention and field
+    # (first seen 2026-08-10, the 5-slot reinstall at inches-2026/137A
+    # alongside the 6-slot runs 9402+), and mixing their rasters shifts
+    # every pixel's median enough to move already-reviewed placements.
     baselines = {}
-    for pool in set((conventions[k], fields[k]) for k in keys):
+    for pool in set((holders[k], conventions[k], fields[k]) for k in keys):
         subset = {k: counts[k] for k in keys
-                  if (conventions[k], fields[k]) == pool}
+                  if (holders[k], conventions[k], fields[k]) == pool}
         baselines[pool] = compute_baselines(subset)
-        print(f"baselines for {pool[0]} at {pool[1]}: "
+        print(f"baselines for {pool[0]} {pool[1]} at {pool[2]}: "
               f"{len(subset)} segment(s)")
     excesses = {k: {det: excess_map(counts[k][det],
-                                    baselines[(conventions[k],
+                                    baselines[(holders[k],
+                                               conventions[k],
                                                fields[k])][det])
                     for det in ("upper", "lower")}
                 for k in keys}

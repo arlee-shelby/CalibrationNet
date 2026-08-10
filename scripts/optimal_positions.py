@@ -298,6 +298,15 @@ def main() -> None:
                              "mapping depends on the field, so segments "
                              "taken at different main/udet currents must "
                              "not share a trend.")
+    parser.add_argument("--isotope", default=None, metavar="NAME",
+                        help="plan coverage using ONLY the slots whose "
+                             "installed source label starts with this "
+                             "(e.g. Bi-207 — which slot holds what comes "
+                             "from the installation record). The other "
+                             "slots still help locate the frames; they "
+                             "just don't count as coverage. The isotope "
+                             "is appended to the output stem so the "
+                             "all-slot plan is never overwritten.")
     parser.add_argument("--tag", default=None,
                         help="suffix for every output filename (e.g. "
                              "'137A') so this plan is written alongside "
@@ -452,6 +461,28 @@ def main() -> None:
                 parts.append(f"{slot} ({dx:+.2f},{dy:+.2f},n={n})")
             report(f"    {det}: " + "  ".join(parts))
 
+    # --isotope: coverage counts ONLY the slots holding this isotope's
+    # sources (per the installation record). Everything above — frame
+    # location, trend, offset refinement — already used every slot,
+    # which is deliberate: more slots pin the frame better; the filter
+    # narrows only what the plan tries to put over the pixels.
+    if args.isotope:
+        slot_map = slot_maps[spec_keys[0]]
+        wanted = {slot for slot, (_sid, label) in slot_map.items()
+                  if label.startswith(args.isotope)}
+        if not wanted:
+            installed = {s: label for s, (_sid, label)
+                         in sorted(slot_map.items())}
+            raise SystemExit(f"no slot of this installation holds a "
+                             f"{args.isotope!r} source; installed: "
+                             f"{installed}")
+        offsets_by_det = {det: {slot: off
+                                for slot, off in offsets_by_det[det].items()
+                                if slot in wanted}
+                          for det in ("upper", "lower")}
+        report(f"  coverage from {args.isotope} slots only: "
+               f"{', '.join(sorted(wanted))}")
+
     for det in ("upper", "lower"):
         cx, cy = trend[det]
         report(f"  {det}: d(x)/d(linear) = {cx[0]:+.2f} hex/inch, "
@@ -561,11 +592,41 @@ def main() -> None:
 
     import os
     os.makedirs("plans", exist_ok=True)
+    # Every flag that changes the PLAN shows up in the filenames, in a
+    # fixed order, so variant plans sit side by side and are comparable
+    # at a glance (AS, 2026-08-10). Defaults are omitted — the plain
+    # invocation keeps the canonical stem it always had.
     stem = OUT_TEMPLATE.format(holder=holder, convention=convention)
+    if args.runs:
+        stem += "_runs" + "+".join(str(r) for r in sorted(set(args.runs)))
+    if args.isotope:
+        stem += f"_{args.isotope}"
+    if args.label != "nabpy-standard":
+        stem += f"_{args.label}"
+    if args.tolerance_mm != 2.6:
+        stem += f"_tol{args.tolerance_mm:g}"
+    if args.boundary_mm != 4.5:
+        stem += f"_bound{args.boundary_mm:g}"
+    if args.step != 0.05:
+        stem += f"_step{args.step:g}"
+    if args.min_gain != 1:
+        stem += f"_mingain{args.min_gain}"
+    if args.exclude_rings is not None:
+        stem += f"_norings{args.exclude_rings}"
+    if args.max_positions is not None:
+        stem += f"_max{args.max_positions}"
+    if args.must_include:
+        stem += "_incl" + "+".join(str(p) for p in sorted(args.must_include))
+    if args.no_refine:
+        stem += "_norefine"
+    # What-if plans extrapolate beyond the scanned range and must never
+    # reach the automation — the ranges are spelled out in the name.
+    if args.assume_linear:
+        stem += f"_WHATIFlin{args.assume_linear[0]:g}to{args.assume_linear[1]:g}"
+    if args.assume_horizontal:
+        stem += f"_WHATIFhor{args.assume_horizontal[0]:g}to{args.assume_horizontal[1]:g}"
     if args.tag:
         stem += f"_{args.tag}"
-    if whatif:
-        stem += "_whatif"
     with open(f"{stem}.csv", "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(csv_rows[0]))
         writer.writeheader()

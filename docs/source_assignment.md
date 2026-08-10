@@ -60,9 +60,15 @@ automatically, which applies only the non-CHECK rows.
 
 ## Pools, holders, fields
 
-Placements pool per **(holder, convention, field)**. The tray geometry
-is a property of the physical holder (anchors are keyed by holder +
-convention), and the field key —
+Placements pool per **(holder, convention, field)** — baselines, frame
+trends, all of it. The holder became a REQUIRED part of the baseline
+key on 2026-08-10, when two different trays first shared a convention
+and field (the 5-slot reinstall, run 9464, alongside the 6-slot runs
+9402+ at inches-2026/137A): pooled together, their rasters shifted
+each other's medians enough to move 524 already-reviewed placements.
+With the holder in the key, the pre-existing pools reproduce exactly.
+The tray geometry is a property of the physical holder (anchors are
+keyed by holder + convention), and the field key —
 `source_assignment.field_key(run)`, e.g. `137/137A-exb2000` — captures
 the magnet currents and ExB voltage (binned at 100 V, so residual
 readings of a few volts don't split pools), because the readback→frame
@@ -75,7 +81,8 @@ and trends never mix field epochs; every review-CSV row carries its
 |---|---|---|---|
 | fall 2025 (runs ≤ 8865) | 5-slot | legacy-units | 137/137A-exb-1500 |
 | 2026-07-24 .. 07-30 (9326–9378) | 6-slot | inches-2026 | 110/110A-exb0 |
-| 9402+ (2026-07-31 →) | 6-slot | inches-2026 | 137/137A-exb2000 |
+| 9402–9415 (2026-07-31 →) | 6-slot | inches-2026 | 137/137A-exb2000 |
+| 9464+ (2026-08-10 →, 5-slot reinstall; anchor run 9464 seg 30) | 5-slot | inches-2026 | 137/137A-exb2000 |
 
 **Why this matters (validation):** derived field-blind, the anchor run
 9326's own placements sat a full pixel column off its eye-verified

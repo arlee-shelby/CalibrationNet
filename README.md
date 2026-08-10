@@ -253,6 +253,12 @@ python scripts/fit_spectra.py --run 8622 --pixels 60 --plot fit_plots/
 # needs the slow-controls tunnel for the ingest stage):
 ./scripts/with_sc_tunnel.sh python scripts/process_run.py 9402 \
     --h5-dir /path/to/h5/ --min-dwell 3
+
+# --min-dwell must sit safely BELOW the run's dwell length, or segments
+# get dropped as stage motion (default is 5 min; a rastering run with
+# ~3 min dwells ingested at the default keeps only its final long park —
+# run 9464 did exactly this until re-ingested with --min-dwell 2).
+# Re-ingesting with the right value is always safe (idempotent).
 ```
 
 [scripts/process_run.py](scripts/process_run.py) chains every stage —

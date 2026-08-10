@@ -121,6 +121,24 @@ ANCHORS = {
                       "R2C1": [1059], "R2C2": [1076], "R2C3": [1079]},
         },
     },
+    # The 5-slot tray re-installed in 2026 (new installation, Cd in a
+    # different slot than fall 2025 — slot->source comes from
+    # source_installations, so only the mounting needs re-anchoring).
+    ("5-slot", INCHES_2026): {
+        "run_number": 9464,
+        "segment_index": 30,
+        "linear_position": 33.320846875,
+        "horizontal_position": -0.3202057631349333,
+        # From run 9464 segment 30's hit maps (AS, 2026-08-10),
+        # identified by eye. The upper R2C1 center (~47) is approximate.
+        "pixels": {
+            "upper": {"R1C2": [85], "R1C3": [77, 89],
+                      "R2C1": [47], "R2C2": [51], "R2C3": [43]},
+            "lower": {"R1C2": [1038], "R1C3": [1041],
+                      "R2C1": [1072], "R2C2": [1087, 1076],
+                      "R2C3": [1091, 1079]},
+        },
+    },
 }
 
 
