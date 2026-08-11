@@ -20,13 +20,23 @@ serve as a cross-check. Scope: Bi-207 (the only isotope with recipes).
 ## The chain
 
 ```bash
-# 1. h5 subruns -> filter CSVs (whole run = segment 0; or provide the
-#    dwell windows the database would have supplied)
+# 0. segment windows (multi-dwell runs). The slow-controls computer is
+#    SEPARATE from GT and stays reachable during GT downtime — run this
+#    on the machine with the slow-controls tunnel + .env (the laptop),
+#    then transfer the CSV (it is gitignored, so scp it):
+python scripts/offline/export_segments.py 9409 9415 9416 \
+    --out offline_output/segments.csv
+scp offline_output/segments.csv <nersc>:CalibrationNet/offline_output/
+
+# 1. h5 subruns -> filter CSVs (whole run = segment 0; or the exported
+#    dwell windows). On NERSC, submit one batch task per segment:
+./scripts/offline/submit_trap_filter_nersc.sh \
+    /pscratch/sd/a/ashelby/TempCal offline_output/segments.csv
+#    (shared QOS, 4 h; failed task N is redone with sbatch --array=N)
+#    or directly, for a smoke test on a login node:
 python scripts/offline/trap_filter.py --h5-dir /pscratch/.../TempCal \
-    --run 9416 --out offline_output/filter
-#    with segments: --segments segments.csv
-#    (columns run,segment,start_time,end_time; ISO timestamps WITH
-#     timezone, e.g. 2026-08-10 12:55:48-04:00)
+    --run 9416 --segments offline_output/segments.csv --segment 0 \
+    --out offline_output/filter
 
 # 2. filter CSVs -> fits CSV + the usual per-fit figures + failure list
 python scripts/offline/fit_spectra.py offline_output/filter

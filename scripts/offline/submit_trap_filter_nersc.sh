@@ -41,8 +41,7 @@ LINE=\$(sed -n "\${SLURM_ARRAY_TASK_ID}p" "$MANIFEST")
 RUN=\$(echo \$LINE | cut -d' ' -f1)
 SEG=\$(echo \$LINE | cut -d' ' -f2)
 echo "task \${SLURM_ARRAY_TASK_ID}: run \$RUN segment \$SEG"
-$ENV_PY scripts/offline/trap_filter.py --h5-dir "$H5_DIR" \\
-    --run \$RUN --segments "$SEGMENTS" --segment \$SEG --out "$OUT_DIR"
+$ENV_PY scripts/offline/trap_filter.py --h5-dir "$H5_DIR" --run \$RUN --segments "$SEGMENTS" --segment \$SEG --out "$OUT_DIR"
 EOF
 )
 echo "submitted array job $JOB"

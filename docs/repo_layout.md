@@ -63,7 +63,8 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 | benchmark_fits.py | trap_filter_outputs | nothing (live-vs-reference fit comparison report) |
 | process_run.py | — | runs every stage above for one run, in order, idempotently |
 | pending_segments.py | database | manifest / progress report (stdout) |
-| offline/trap_filter.py | run .h5 files (+ optional segments CSV) | ingestable staging CSVs under `offline_output/filter/` — NO database |
+| offline/export_segments.py | slow-controls DB (its own tunnel — reachable even when GT is down) | `offline_output/segments.csv` (dwell windows for offline filtering; gitignored, scp it to the compute site) |
+| offline/trap_filter.py | run .h5 files (+ optional segments CSV) | ingestable staging CSVs under `offline_output/filter/` — NO database. `submit_trap_filter_nersc.sh` wraps it as a SLURM array (one task per segment, shared QOS) |
 | offline/fit_spectra.py | filter CSVs + `data/decay_energies.csv` | `offline_output/fits/Run*_fits.csv` + figures + failure CSVs — NO database |
 | offline/calibrate.py | fits CSVs + a supplied keV CSV | `offline_output/calibrations/` (CSV + QA figures) — NO database |
 
