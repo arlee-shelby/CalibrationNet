@@ -24,3 +24,4 @@ filter_output_*.csv
 bc_maps*.csv
 data/TrapFilterData/
 slurmoutputs/
+offline_output/

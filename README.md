@@ -336,6 +336,18 @@ results (centroid pulls, chi2, success) over real data — followed by
 AS's plot review of the regenerated `fit_plots/` figures on the
 reference pixels before adoption.
 
+## Working without the database (offline pipeline)
+
+`scripts/offline/` runs the same trap-filter → fit → calibrate chain
+entirely from files — for a cluster without database access or while
+the database is down (first used at NERSC during GT maintenance,
+2026-08-11). Same frozen model, same recipes, same fitting procedure
+(shared package modules, not copies); filter CSVs use the cluster
+staging format, so everything ingests into the database unchanged when
+it returns. Validated to reproduce the database pipeline's fits and
+calibrations to the digit on run 8622. Scope: Bi-207. Details and the
+NERSC environment recipe: [scripts/offline/README.md](scripts/offline/README.md).
+
 ## Planning source positions
 
 ```bash

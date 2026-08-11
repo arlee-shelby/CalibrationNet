@@ -45,13 +45,15 @@ from calibrationnet.db import get_session
 from calibrationnet.fit_recipes import RECIPES
 from calibrationnet.models import RunPixel, TrapFilterOutput
 
-# Comparison-copy history: the original module was md5
-# 52c85de2409e284a8cdaf303369b82a9. On 2026-08-04 AS added the optional
-# fixed-zero threshold gaussian (threshold_params; off unless given),
-# then bounded threshold_amp/threshold_sig at min=0. Each change was
-# verified to leave every reference-pixel fit numerically identical
-# with the option unused, then the copy below was updated to match.
-REFERENCE_MD5 = "8e53f184e35c41833d19790d78c04ed4"
+# Comparison-copy history: the original module is md5
+# 52c85de2409e284a8cdaf303369b82a9. On 2026-08-04 AS added an optional
+# fixed-zero threshold gaussian (md5 8e53f184e35c41833d19790d78c04ed4);
+# trials showed it never helped (amplitude driven to 0 or soaking
+# degeneracy), so on 2026-08-10 the module was restored byte-identically
+# to the original, as the roadmap always planned before production.
+# Each change was verified to leave every reference-pixel fit
+# numerically identical.
+REFERENCE_MD5 = "52c85de2409e284a8cdaf303369b82a9"
 FROZEN = ["gaussian", "background", "lower_exponential", "step_function",
           "fit_model", "residual_function", "get_histogram_data_uncertainty"]
 CHANGEABLE = ["get_initial_peak_parameters", "do_fit", "get_fit"]

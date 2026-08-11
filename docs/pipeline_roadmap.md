@@ -240,7 +240,12 @@ composes add_parameters/do_fit (changeable) at script level.
     tested windows (drives its amplitude to 0 or soaks degeneracy), and
     AS's past experience agrees — extra parameters without fit-quality
     gain. It STAYS AN UNUSED OPTION during development and is expected
-    to be REVERTED from the model before production.
+    to be REVERTED from the model before production. **REVERTED
+    2026-08-10:** both fit-function files restored byte-identically to
+    the pre-threshold original (md5 52c85de2409e284a8cdaf303369b82a9,
+    from commit af590ef), the benchmark md5 updated back, and the
+    same-numbers check re-run — the model is again exactly the
+    physics original.
   - Open confusions to resolve with the new complete plot set: the
     sharp ~60 ADC peak on 8718 p84/p85 (ties to the ~62 ADC mystery
     line), p1043's Auger window contents, p109's fit region, and p95's
@@ -379,7 +384,14 @@ composes add_parameters/do_fit (changeable) at script level.
   under-determined there. That was a MODEL decision for AS — settled
   2026-08-10: NO blend fitting of any kind (see the ruling under
   4.3/4.4); the Fall-2025 LDET data is an oddball not to build
-  around. Peak-count recipe variants remain open. Development speed (AS, 2026-08-05): whole-run
+  around. Peak-count recipe variants: CLOSED as not-needed (AS,
+  2026-08-10) — their motivation was the 2025-LDET blend class, now an
+  oddball; revisit only if a 2026 failure class demands it. Also
+  closed as 2025-oddball-tied: the short-trap Auger window numbers and
+  the +8..13 ADC Auger offset observation. Fitting policy for data
+  selection (AS, 2026-08-10): raster segments lack statistics — fit
+  only runs/segments with dwells of roughly 20-30 minutes or more
+  (may change later). Development speed (AS, 2026-08-05): whole-run
   fitting was far too slow for iteration — `fit_spectra.py --dev`
   fits only data/dev_pixels.csv (one representative pixel per known
   class per trap label, AS-editable), minutes instead of an hour;

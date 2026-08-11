@@ -9,8 +9,8 @@ directory; everything historical lands in `development/`.
 
 | directory | contents |
 |---|---|
-| `calibrationnet/` | the Python package: ORM models, pipeline modules, fit code (`fit_functions.py` — frozen physics; `fit_functions_reference.py` — the untouchable benchmark copy), fit recipes, geometry, positions, query helpers |
-| `scripts/` | every pipeline entry point (see the table below) |
+| `calibrationnet/` | the Python package: ORM models, pipeline modules, fit code (`fit_functions.py` — frozen physics; `fit_functions_reference.py` — the untouchable benchmark copy), fit recipes, `fitting.py` (the retry/gate/rescue procedure — database-free, shared by the DB and offline pipelines), `calibration.py` (calibration fit math, database-free), geometry, positions, query helpers |
+| `scripts/` | every pipeline entry point (see the table below); `scripts/offline/` is the same trap-filter → fit → calibrate chain run entirely from files, no database — see its README (first used at NERSC during GT maintenance) |
 | `alembic/` | database migrations (`alembic upgrade head` applies them) |
 | `data/` | canonical machine-readable inputs the seeds read (see the seed-file table below); `data/TrapFilterData/` is the cluster-side staging area for trap filter jobs (un-ingested CSVs + manifests + `slurmout/` logs — gitignored, transient) |
 | `data/provenance/` | the human documents the seeded data came from: the Source Installation History PDF, the corrected 7/21 installation figure, and the pixel preamp/FET map figures from which `data/pixel_wiring.csv` was hand-transcribed |
@@ -63,6 +63,9 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 | benchmark_fits.py | trap_filter_outputs | nothing (live-vs-reference fit comparison report) |
 | process_run.py | — | runs every stage above for one run, in order, idempotently |
 | pending_segments.py | database | manifest / progress report (stdout) |
+| offline/trap_filter.py | run .h5 files (+ optional segments CSV) | ingestable staging CSVs under `offline_output/filter/` — NO database |
+| offline/fit_spectra.py | filter CSVs + `data/decay_energies.csv` | `offline_output/fits/Run*_fits.csv` + figures + failure CSVs — NO database |
+| offline/calibrate.py | fits CSVs + a supplied keV CSV | `offline_output/calibrations/` (CSV + QA figures) — NO database |
 
 ## What must stay in sync
 
