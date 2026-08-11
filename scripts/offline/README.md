@@ -51,7 +51,9 @@ Everything lands under `offline_output/` (gitignored): `filter/`,
 `fits/`, `fit_plots/` (figures + `fit_failures_summary.csv`),
 `calibrations/` (CSV + per-pixel QA figures).
 
-Mind the runtime: filtering is the expensive step (~10 min of compute
+Resource sizing, GT-vs-NERSC differences, and the job-conversion
+checklist live in docs/cluster_resources.md. Mind the runtime:
+filtering is the expensive step (~10 min of compute
 per ~30 min subrun); a whole long run on a login node is unkind and
 slow — use a compute job for full runs, the login node only for a few
 subruns' smoke test.
