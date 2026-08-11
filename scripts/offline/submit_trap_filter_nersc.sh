@@ -6,6 +6,11 @@
 # 9416 dwells in ~1-2 h, so 4 h walltime is honest headroom (a task
 # that dies is finished by resubmitting just its index).
 #
+# Sizing (32 cpus / 100 GB) mirrors the proven GT task
+# (scripts/apply_trap_filter.sh: 24 cpus, 100 GB): each subrun is a
+# ~7.6 GB lazy dask array, and under-provisioned memory gets the task
+# OOM-Killed with no output (seen 2026-08-11 at 4 cpus/~8 GB).
+#
 #   ./scripts/offline/submit_trap_filter_nersc.sh <h5 dir> <segments.csv> [out dir]
 #
 # Run from the CalibrationNet directory on NERSC. Assumes the
@@ -30,7 +35,8 @@ JOB=$(sbatch --parsable <<EOF
 #!/bin/bash
 #SBATCH --qos=shared
 #SBATCH -N1 --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=100G
 #SBATCH --constraint=cpu
 #SBATCH --time=04:00:00
 #SBATCH --array=1-${N_TASKS}
