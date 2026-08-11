@@ -46,27 +46,30 @@ per ~30 min subrun); a whole long run on a login node is unkind and
 slow — use a compute job for full runs, the login node only for a few
 subruns' smoke test.
 
-## NERSC environment (proven 2026-08-11 on Perlmutter)
+## NERSC environment (proven from scratch 2026-08-11, Perlmutter)
 
-Everything in `$HOME`, pip-only, no conda, no sudo:
+Everything self-contained in ONE folder in `$HOME` (delete it and every
+trace is gone), pip-only, no conda, no sudo — using the repo's own
+setup script with pyNab and deltarice cloned from their public repos:
 
 ```bash
-python3 -m venv $HOME/pyNabEnv           # system python3 (3.9)
-$HOME/pyNabEnv/bin/pip install --upgrade pip
-$HOME/pyNabEnv/bin/pip install "numpy==1.26.4" scipy h5py dask \
-    matplotlib pandas lmfit sqlalchemy
-# deltarice: compiled against the cray-hdf5 module's headers.
-#  -Wno-int-conversion: gcc 14 hard-errors on an upstream quirk in
-#  deltaRice_h5plugin.c (H5PLget_plugin_info returns the filter ID int
-#  where the API wants a struct pointer) that clang only warns about;
-#  the flag reproduces the working macOS build. The rpath bakes the
-#  HDF5 location in, so no module load is needed at runtime.
+mkdir -p $HOME/pyNabEnv
+git clone https://gitlab.com/NabExperiment/pyNab.git   $HOME/pyNabEnv/pyNab
+git clone https://gitlab.com/dgma224/deltarice.git     $HOME/pyNabEnv/deltarice
+
+# NERSC-specific build variables: deltarice compiles against the
+# cray-hdf5 module's headers, and gcc 14 hard-errors on an upstream
+# quirk in deltaRice_h5plugin.c (H5PLget_plugin_info returns the
+# filter ID int where the API wants a struct pointer) that clang only
+# warns about. The rpath bakes the HDF5 location in, so no module
+# load is needed at runtime.
 module load cray-hdf5
-HDF5_DIR=$HDF5_DIR CFLAGS="-Wno-int-conversion" \
-    LDFLAGS="-Wl,-rpath,$HDF5_DIR/lib" \
-    $HOME/pyNabEnv/bin/pip install ~/ManitobaWork_1374/deltarice
-$HOME/pyNabEnv/bin/pip install -e ~/ManitobaWork_1374/pyNab
+export HDF5_DIR CFLAGS="-Wno-int-conversion" LDFLAGS="-Wl,-rpath,$HDF5_DIR/lib"
+
+cd $HOME/CalibrationNet     # rsync'd, or cloned once you have access set up
+./scripts/setup_env.sh $HOME/pyNabEnv $HOME/pyNabEnv/pyNab $HOME/pyNabEnv/deltarice
 ```
 
-(sqlalchemy is imported by a shared module but never connects — no
-tunnel or .env is needed for the offline chain.)
+(The setup script also installs this package's own dependencies —
+sqlalchemy among them, which a shared module imports but the offline
+chain never connects with: no tunnel and no `.env` file are needed.)

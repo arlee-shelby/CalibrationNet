@@ -399,13 +399,21 @@ Everything else is a plain `pip install -e .`.
 
 ### A database-only environment
 
-Enough for ingesting runs, hit maps, and source assignment:
+Enough for ingesting runs, hit maps, and source assignment. Create a
+Python environment — the name and location are entirely yours (`.venv`
+below is just a common convention; an environment you already have
+works the same, skip the first line and activate yours instead):
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # or: source <your env>/bin/activate
 pip install -e .
 cp .env.example .env      # then fill in DATABASE_URL (and SC_DATABASE_URL)
 ```
+
+(The `.env` FILE is unrelated to the Python environment despite the
+name: it is a plain text file of database credentials that
+`calibrationnet/db.py` reads when connecting — gitignored, and not
+needed at all for the offline pipeline.)
 
 ### An environment that can also apply the trap filter
 
@@ -423,16 +431,34 @@ source <your nabPy env>/bin/activate
 pip install -e <path to this repo>
 ```
 
-**If you have no nabPy environment yet**, build a combined one from source
-checkouts of pyNab and deltarice:
+**If you have no nabPy environment yet — starting completely from
+scratch** — clone pyNab and deltarice from their public repositories
+(a "checkout" just means such a cloned copy) and build a combined
+environment. Cloning them INSIDE the environment folder keeps
+everything self-contained: delete that one folder and every trace
+(packages and sources alike) is gone — nothing else on the machine is
+touched, no admin rights needed anywhere:
 
 ```bash
-./scripts/setup_env.sh <new env dir> <pyNab checkout> <deltarice checkout>
+mkdir -p <env dir>
+git clone https://gitlab.com/NabExperiment/pyNab.git   <env dir>/pyNab
+git clone https://gitlab.com/dgma224/deltarice.git     <env dir>/deltarice
+./scripts/setup_env.sh <env dir> <env dir>/pyNab <env dir>/deltarice
 ```
 
 It pins numpy/llvmlite/numba to a tested-good set (newer llvmlite often has
 no wheel and fails to build), installs nabPy and deltaRice, then installs
 this package, and finally verifies that everything imports.
+
+Proven from scratch on NERSC Perlmutter (2026-08-11) with two
+platform-specific build variables exported first — deltarice needs the
+HDF5 headers, and gcc 14 hard-errors on an upstream quirk that older
+compilers only warn about:
+
+```bash
+module load cray-hdf5
+export HDF5_DIR CFLAGS="-Wno-int-conversion" LDFLAGS="-Wl,-rpath,$HDF5_DIR/lib"
+```
 
 Either way, check the result:
 

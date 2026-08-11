@@ -71,6 +71,9 @@ def main() -> None:
                         help="only subruns LO..HI inclusive — for smoke "
                              "tests and for chunking a long run across "
                              "batch jobs (whole-run mode only)")
+    parser.add_argument("--segment", type=int, default=None,
+                        help="process only this segment index (with "
+                             "--segments) — one batch task per segment")
     parser.add_argument("-rt", "--risetime", type=int, default=1250,
                         help="trap rise time, 4 ns bins (default 1250)")
     parser.add_argument("-ft", "--flattop", type=int, default=50)
@@ -85,8 +88,11 @@ def main() -> None:
     for run in args.run:
         if args.segments is not None:
             segments = read_segments(args.segments, run)
+            if args.segment is not None:
+                segments = [s for s in segments if s[0] == args.segment]
             if not segments:
-                print(f"run {run}: no rows in {args.segments} — skipped")
+                print(f"run {run}: no matching rows in {args.segments} "
+                      "— skipped")
                 continue
         else:
             segments = [(0, None, None)]     # the whole run, one segment
