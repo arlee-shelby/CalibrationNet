@@ -38,7 +38,11 @@ python scripts/offline/trap_filter.py --h5-dir /pscratch/.../TempCal \
     --run 9416 --segments offline_output/segments.csv --segment 0 \
     --out offline_output/filter
 
-# 2. filter CSVs -> fits CSV + the usual per-fit figures + failure list
+# 1b. see where the sources actually sat (recommended before fitting):
+python scripts/offline/show_hitmap.py offline_output/filter
+
+# 2. filter CSVs -> fits CSV + per-fit figures + failure list
+#    (statistics-gated pixels get CSV rows but NO figures)
 python scripts/offline/fit_spectra.py offline_output/filter
 
 # 3. fits + YOUR keV values (e.g. simulation-corrected) -> calibrations

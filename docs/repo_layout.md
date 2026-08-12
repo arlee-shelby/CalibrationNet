@@ -65,6 +65,7 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 | pending_segments.py | database | manifest / progress report (stdout) |
 | offline/export_segments.py | slow-controls DB (its own tunnel — reachable even when GT is down) | `offline_output/segments.csv` (dwell windows for offline filtering; gitignored, scp it to the compute site) |
 | offline/trap_filter.py | run .h5 files (+ optional segments CSV) | ingestable staging CSVs under `offline_output/filter/` — NO database. `submit_trap_filter_nersc.sh` wraps it as a SLURM array (one task per segment, shared QOS) |
+| offline/show_hitmap.py | filter CSVs | `offline_output/hitmaps/Run*_hitmap.png` (same shared drawing as show_hitmap.py) — NO database |
 | offline/fit_spectra.py | filter CSVs + `data/decay_energies.csv` | `offline_output/fits/Run*_fits.csv` + figures + failure CSVs — NO database |
 | offline/calibrate.py | fits CSVs + a supplied keV CSV | `offline_output/calibrations/` (CSV + QA figures) — NO database |
 

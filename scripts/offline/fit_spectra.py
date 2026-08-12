@@ -202,19 +202,14 @@ def main() -> None:
                     print(f"  skipped: insufficient statistics "
                           f"(CE window counts={int(window.sum())}, "
                           f"peak height={peak_height:.0f})")
-                    figure = ""
-                    if args.plot is not None:
-                        fig_path = args.plot / (
-                            f"Run{run}_seg{segment}_pix{pixel}"
-                            f"_{recipes[0]['label']}.png")
-                        plot_failed_spectrum(
-                            data, recipes[0], ratio0, None, fig_path,
-                            note="SKIPPED: insufficient statistics "
-                                 "(data only)")
-                        figure = fig_path.name
+                    # No figure for gate-skips: on an offline whole-run
+                    # fit, MOST pixels are source-free and the figures
+                    # drown the ones worth reviewing (AS, 2026-08-11).
+                    # The detail CSV still records every skip; use
+                    # scripts/offline/show_hitmap.py to see where the
+                    # sources sat.
                     record_failure(pixel, recipes[0]["label"],
-                                   "statistics gate", gate_numbers,
-                                   figure=figure)
+                                   "statistics gate", gate_numbers)
                     skipped += 1
                     continue
 
