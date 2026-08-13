@@ -734,22 +734,31 @@ FAILURE_FIELDS = ["run", "segment", "pixel", "tf_label", "recipe", "stage",
 def update_failure_csv(path, rows, processed_keys, stages=None):
     """Rewrite a failure CSV: keep rows from other runs/pixels, replace
     the rows of every pixel processed in THIS invocation (so a pixel
-    that now fits drops out of the file), append the new failures."""
-    kept = []
-    if path.exists():
-        with open(path, newline="") as fh:
-            for row in csv.DictReader(fh):
-                key = (row["run"], row["segment"], row["tf_label"],
-                       row["pixel"])
-                if key not in processed_keys:
-                    kept.append(row)
-    if stages is not None:
-        rows = [row for row in rows if row["stage"] in stages]
-    merged = kept + rows
-    merged.sort(key=lambda row: (int(row["run"]), int(row["segment"]),
-                                 int(row["pixel"]), row["recipe"]))
-    with open(path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=FAILURE_FIELDS)
-        writer.writeheader()
-        writer.writerows(merged)
+    that now fits drops out of the file), append the new failures.
+
+    The whole read-merge-write holds an exclusive lock on a sidecar
+    .lock file: concurrent fitting jobs (e.g. one SLURM array task per
+    segment, all sharing one summary CSV) would otherwise overwrite
+    each other's rows and silently lose failures."""
+    import fcntl
+    lock_path = path.with_name(path.name + ".lock")
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        kept = []
+        if path.exists():
+            with open(path, newline="") as fh:
+                for row in csv.DictReader(fh):
+                    key = (row["run"], row["segment"], row["tf_label"],
+                           row["pixel"])
+                    if key not in processed_keys:
+                        kept.append(row)
+        if stages is not None:
+            rows = [row for row in rows if row["stage"] in stages]
+        merged = kept + rows
+        merged.sort(key=lambda row: (int(row["run"]), int(row["segment"]),
+                                     int(row["pixel"]), row["recipe"]))
+        with open(path, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=FAILURE_FIELDS)
+            writer.writeheader()
+            writer.writerows(merged)
 
