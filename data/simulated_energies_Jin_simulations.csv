@@ -1,0 +1,18 @@
+isotope,label,energy_kev,energy_error_kev,intensity,intensity_error,origin,notes
+Bi-207,Auger 56,22.269661,0.005846,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,Auger 68,35.276915,0.002800,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 482,450.020179,0.003731,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 554,522.714534,0.005186,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 566,535.039124,0.013013,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 976,944.193705,0.002459,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 1048,1016.613371,0.004933,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+Bi-207,CE 1060,1029.008589,0.012757,,,Jin-simulation-UDET-30kV,numbers from simulation Jin ran for UDET at -30kV
+
+Bi-207,Auger 56,52.104451,0.002088,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,Auger 68,64.812561,0.004618,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 482,478.324367,0.022694,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 554,551.002922,0.043067,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 566,563.829058,0.094630,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 976,972.520796,0.019755,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 1048,1045.031785,0.036502,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
+Bi-207,CE 1060,1057.765130,0.055872,,,Jin-simulation-LDET-1kV,numbers from simulation Jin ran for LDET at -1kV
