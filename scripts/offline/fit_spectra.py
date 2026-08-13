@@ -42,10 +42,12 @@ MAX_PEAKS = 6
 
 FIT_FIELDS = (["run", "segment", "pixel", "isotope", "label",
                "fit_lo", "fit_hi", "n_peaks", "chi2", "ndf",
-               "reduced_chi2", "attempt", "window", "scout_ratio"]
+               "reduced_chi2", "attempt", "window", "scout_ratio",
+               "init_widths", "beta", "beta_err"]
               + [f"{q}{i}" for i in range(1, MAX_PEAKS + 1)
                  for q in ("cen", "cen_err", "sig", "sig_err",
-                           "amp", "amp_err")])
+                           "amp", "amp_err", "n", "n_err",
+                           "h", "h_err")])
 
 
 def line_energies_from_csv(isotope):
@@ -85,10 +87,19 @@ def fit_row(run, segment, pixel, isotope, recipe, bounds, result, config):
            "reduced_chi2": f"{result.redchi:.4f}",
            "attempt": config.get("attempt", ""),
            "window": config.get("window", ""),
-           "scout_ratio": config.get("scout_ratio", "")}
+           "scout_ratio": config.get("scout_ratio", ""),
+           "init_widths": ";".join(
+               f"{k}={v:g}" for k, v in sorted(
+                   (config.get("initial_peak_width_guess") or {}).items())),
+           "beta": f"{result.params['beta'].value:.4f}",
+           "beta_err": (f"{result.params['beta'].stderr:.4f}"
+                        if result.params['beta'].stderr else "")}
     for i in range(1, MAX_PEAKS + 1):
+        # n (tail fraction) and h (step height) diagnose tail problems;
+        # a frozen n/h (conditioned rescue) shows an empty error.
         for q, name in (("cen", f"cen{i}"), ("sig", f"sig{i}"),
-                        ("amp", f"amp{i}")):
+                        ("amp", f"amp{i}"), ("n", f"n{i}"),
+                        ("h", f"h{i}")):
             par = result.params.get(name)
             row[f"{q}{i}"] = "" if par is None else f"{par.value:.4f}"
             row[f"{q}_err{i}"] = ("" if par is None or par.stderr is None
@@ -152,7 +163,8 @@ def main() -> None:
         fitted = failed = skipped = 0
 
         def record_failure(pixel, recipe_label, stage, gate_numbers=None,
-                           attempts="", best_redchi="", figure=""):
+                           attempts="", best_redchi="", best_reason="",
+                           figure=""):
             failure_rows.append({
                 "run": str(run), "segment": str(segment),
                 "pixel": str(pixel), "tf_label": "offline",
@@ -164,6 +176,7 @@ def main() -> None:
                 "attempts": str(attempts),
                 "best_redchi": ("" if best_redchi in ("", None)
                                 else f"{best_redchi:.2f}"),
+                "best_reason": best_reason,
                 "figure": figure,
             })
 
@@ -260,6 +273,7 @@ def main() -> None:
                         gate_numbers,
                         attempts=config.get("attempts", ""),
                         best_redchi=config.get("best_redchi"),
+                        best_reason=config.get("best_reason", ""),
                         figure=plot_path.name if plot_path else "")
                     failed += 1
                     continue

@@ -71,7 +71,8 @@ def pixel_relation(data, anchor):
 
 def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
                              pred_ratio, relation, plot_path, title,
-                             thresholds, conditioned=False):
+                             thresholds, conditioned=False,
+                             tail_freeze=None, beta_start=None):
     """Second-chance fit with COMPUTED starting guesses.
 
     find_peaks needs distinct bumps to build the initial parameters;
@@ -130,6 +131,11 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
     params = Parameters()
     params.add("num_peaks", value=n_peaks, vary=False)
     fit_functions.add_parameters(params, init)
+    if beta_start is not None:
+        # Starting tail decay length — a per-detector property (2026:
+        # UDET ~8, LDET ~30) that no width retry can compensate for.
+        # Set AFTER add_parameters, an input-level change only.
+        params["beta"].value = beta_start
     if conditioned:
         amps = [init[f"amp{i}"] for i in range(1, n_peaks + 1)]
         for i, adc in enumerate(preds, start=1):
@@ -141,11 +147,20 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
             half = max(10.0, min(gaps)) if gaps else 10.0
             params[f"cen{i}"].min = adc - half
             params[f"cen{i}"].max = adc + half
+        # Weak peaks cannot determine their own tail shape: hold their
+        # n/h at the values the STRONG peaks of this same spectrum
+        # converged to (tail_freeze, from the plain rescue that just
+        # ran) — the 0.2/0.01 constants are only the fallback when no
+        # plain result exists. (Until 2026-08-11 the constants were
+        # always used; they are 2025 numbers, ~2x below the true 2026
+        # LDET tail fraction, and starved the tails visibly.)
+        freeze_n, freeze_h = (tail_freeze if tail_freeze is not None
+                              else (0.2, 0.01))
         for i in range(1, n_peaks + 1):
             if amps[i - 1] < 0.15 * max(amps):
-                params[f"n{i}"].value = 0.2
+                params[f"n{i}"].value = freeze_n
                 params[f"n{i}"].vary = False
-                params[f"h{i}"].value = 0.01
+                params[f"h{i}"].value = freeze_h
                 params[f"h{i}"].vary = False
     try:
         evaluated, result = fit_functions.do_fit(params, fx, fy, fu)
@@ -155,7 +170,10 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
     if not result.success:
         print(f"    ({tag} rejected: did not converge)")
         return None
-    # (health gate below; returns (result, bounds) on success)
+    # Health gate: an unhealthy fit is returned with healthy=False so
+    # the caller can still read its parameters (the conditioned rescue
+    # freezes weak tails at the plain fit's strong-peak values).
+    healthy = True
     for prefix, threshold in thresholds.items():
         for name, par in result.params.items():
             if (name.startswith(prefix)
@@ -165,9 +183,12 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
                        else f"{par.stderr:.1f}")
                 print(f"    ({tag} rejected: {name} error "
                       f"{err} fails the health gate)")
-                return None
+                healthy = False
+                break
+        if not healthy:
+            break
 
-    if plot_path is not None:
+    if healthy and plot_path is not None:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
@@ -182,7 +203,7 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
         axis.set_title(title)
         fig.savefig(plot_path, dpi=120, bbox_inches="tight")
         plt.close(fig)
-    return result, bounds
+    return result, bounds, healthy
 
 
 def predicted_window(prediction, recipe, primary_bounds):
@@ -298,7 +319,8 @@ def fill_in_width_options(recipe, found_sigmas, scout_ratio):
             yield widths, f"widths: {note}"
 
 
-def fit_seeded(data, bounds, n_peaks, seeds, widths, tag):
+def fit_seeded(data, bounds, n_peaks, seeds, widths, tag,
+               beta_start=None):
     """Fit with GIVEN starting centroids: amplitudes read off the
     smoothed histogram at each seed, then the exact frozen model via
     add_parameters + do_fit (the same core the predicted-start rescue
@@ -333,6 +355,10 @@ def fit_seeded(data, bounds, n_peaks, seeds, widths, tag):
     params = Parameters()
     params.add("num_peaks", value=n_peaks, vary=False)
     fit_functions.add_parameters(params, init)
+    if beta_start is not None:
+        # Starting tail decay length (detector property; see retry_beta
+        # in the recipes) — set AFTER add_parameters, inputs only.
+        params["beta"].value = beta_start
     try:
         _evaluated, result = fit_functions.do_fit(params, fx, fy, fu)
     except Exception as exc:
@@ -465,8 +491,14 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
     best = None        # (redchi, result, bounds, note) — the closest miss
     n_attempts = 0
     tried_inputs = set()   # (window, found peaks, widths) already fitted
+    # Tail-start options for the SEEDED attempts (fill-in, rescue): the
+    # tail decay length beta is a detector property (2026 UDET ~8, LDET
+    # ~30) that no width retry can compensate for. The finder-ladder
+    # attempts go through the frozen get_fit and always start at the
+    # original default; the seeded paths try each recipe retry_beta too.
+    beta_options = [None] + list(recipe.get("retry_beta", ()))
 
-    def remember_rejected(result, bounds, note):
+    def remember_rejected(result, bounds, note, reason=""):
         # Only a converged fit with uncertainties can be the closest
         # miss (anything else has no meaningful curve to draw).
         nonlocal best
@@ -475,7 +507,7 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                 for name in result.var_names):
             return
         if best is None or result.redchi < best[0]:
-            best = (result.redchi, result, bounds, note)
+            best = (result.redchi, result, bounds, note, reason)
 
     primary = (int(round(recipe["bounds"][0] * scout_ratio)),
                int(round(recipe["bounds"][1] * scout_ratio)))
@@ -526,7 +558,7 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
             ok, reason = fit_is_good(result, recipe, prediction)
             if not ok:
                 print(f"    ({note}: rejected — {reason})")
-                remember_rejected(result, bounds, note)
+                remember_rejected(result, bounds, note, reason)
                 continue
             fig_note = (note if window_tag == "recipe window"
                         else f"{note}, {window_tag}")
@@ -560,17 +592,21 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                 seeds, found_sigmas, n_found = filled
                 for widths, width_note in fill_in_width_options(
                         recipe, found_sigmas, window_scale):
+                  for beta_start in beta_options:
                     n_attempts += 1
                     tag = f"fill-in {n_found}/{recipe['n_peaks']} found"
                     note = f"{tag}, {width_note}" if width_note else tag
+                    if beta_start is not None:
+                        note += f", beta={beta_start:g}"
                     result = fit_seeded(data, bounds, recipe["n_peaks"],
-                                        seeds, widths, note)
+                                        seeds, widths, note,
+                                        beta_start=beta_start)
                     if result is None:
                         continue      # reason already printed
                     ok, reason = fit_is_good(result, recipe, prediction)
                     if not ok:
                         print(f"    ({note}: rejected — {reason})")
-                        remember_rejected(result, bounds, note)
+                        remember_rejected(result, bounds, note, reason)
                         continue
                     fig_note = (note if window_tag == "recipe window"
                                 else f"{note}, {window_tag}")
@@ -582,6 +618,7 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                         "init": "fill-in",
                         "attempt": note,
                         "window": window_tag,
+                        "beta_start": beta_start,
                         "fill_in_seeds": [round(s, 1) for s in seeds],
                         "initial_peak_width_guess": widths,
                         "prediction_relation": prediction[1],
@@ -591,26 +628,50 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                     }
                     return result, bounds, config
 
-        # ---- rescue attempts: peaks seeded at predicted positions ----
+        # ---- rescue attempts: peaks seeded at predicted positions.
+        # ---- Each mode also tries the recipe's retry_beta tail starts:
+        # ---- the tail decay length is a detector property (2026 UDET
+        # ---- ~8, LDET ~30) that width retries cannot compensate for.
         if prediction is not None:
             energies, relation, pred_ratio, rel_tag = prediction
             rescue_widths = scale_widths(recipe["widths"], window_scale)
+            plain_result = None
             for conditioned in (False, True):
+              # The conditioned mode freezes weak peaks' tail shape at
+              # what the STRONG peaks of the plain fit converged to.
+              tail_freeze = None
+              if conditioned and plain_result is not None:
+                  amps = {i: plain_result.params[f"amp{i}"].value
+                          for i in range(1, recipe["n_peaks"] + 1)}
+                  strongest = max(amps, key=amps.get)
+                  tail_freeze = (
+                      plain_result.params[f"n{strongest}"].value,
+                      plain_result.params[f"h{strongest}"].value)
+              for beta_start in beta_options:
                 n_attempts += 1
                 outcome = fit_from_predicted_start(
                     data, bounds, recipe["n_peaks"], rescue_widths,
                     energies, pred_ratio, relation, None, recipe["label"],
                     recipe.get("error_thresholds", ERROR_THRESHOLDS),
-                    conditioned=conditioned)
+                    conditioned=conditioned, tail_freeze=tail_freeze,
+                    beta_start=beta_start)
                 if outcome is None:
                     continue          # rejection reason already printed
-                result, pred_bounds = outcome
+                result, pred_bounds, healthy = outcome
+                if not conditioned and plain_result is None:
+                    plain_result = result
                 mode = ("predicted-start-conditioned" if conditioned
                         else "predicted-start")
+                if beta_start is not None:
+                    mode += f", beta={beta_start:g}"
+                if not healthy:
+                    remember_rejected(result, pred_bounds, mode,
+                                      "failed the rescue health gate")
+                    continue
                 ok, reason = fit_is_good(result, recipe, prediction)
                 if not ok:
                     print(f"    ({mode}: rejected — {reason})")
-                    remember_rejected(result, pred_bounds, mode)
+                    remember_rejected(result, pred_bounds, mode, reason)
                     continue
                 fig_note = (mode if window_tag == "recipe window"
                             else f"{mode}, {window_tag}")
@@ -622,6 +683,7 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
                     "init": mode,
                     "attempt": mode,
                     "window": window_tag,
+                    "beta_start": beta_start,
                     "initial_peak_width_guess": rescue_widths,
                     "prediction_relation": relation,
                     "prediction_relation_source": rel_tag,
@@ -637,10 +699,11 @@ def run_recipe(data, recipe, scout_ratio=1.0, plot_path=None,
         plot_failed_spectrum(
             data, recipe, scout_ratio, prediction, plot_path,
             note="ALL ATTEMPTS FAILED THE QUALITY CHECK",
-            best=best[1:] if best is not None else None)
+            best=best[1:4] if best is not None else None)
     return None, None, {
         "attempts": n_attempts,
         "best_redchi": best[0] if best is not None else None,
+        "best_reason": best[4] if best is not None else "",
     }
 
 
@@ -665,7 +728,7 @@ def centroid_report(result):
 # every stage.
 FAILURE_FIELDS = ["run", "segment", "pixel", "tf_label", "recipe", "stage",
                   "ce_window_counts", "ce_peak_height", "attempts",
-                  "best_redchi", "figure"]
+                  "best_redchi", "best_reason", "figure"]
 
 
 def update_failure_csv(path, rows, processed_keys, stages=None):

@@ -26,6 +26,13 @@ RECIPES = {
              # that — for blended peaks, whose half-height width
              # measures too narrow.
              retry_widths=("measured", "measured x 2"),
+             # retry_beta=(...) is also available: extra starting
+             # values for the tail decay length, tried by the SEEDED
+             # attempts (fill-in and rescue). Deliberately NOT set
+             # (AS, 2026-08-12): every accepted 2026 fit converges to
+             # its detector's beta (LDET ~30-37, UDET ~8) from the
+             # default start of 10 on its own — add it back only when
+             # a pixel in the failure file demonstrably needs it.
              # Peak-spacing check anchors (1-based peak numbers): the
              # two strongest CE lines, 482 K and 976 K — the same
              # anchors extraction uses. The other four peaks must sit
@@ -162,8 +169,19 @@ def measure_peak_widths(fit_ydata, peak_finder, n_peaks):
                                               n_peaks)
     if len(peaks) != n_peaks or "widths" not in props:
         return None
-    return {f"sig{i}": max(1.0, w / 2.355)
-            for i, w in enumerate(props["widths"], start=1)}
+    sigmas = [max(1.0, w / 2.355) for w in props["widths"]]
+    # find_peaks measures at half PROMINENCE, so a weak peak riding a
+    # neighbour's tail gets an absurdly narrow width (~1 bin — seen on
+    # 2026 LDET: sig3=1.0 next to sig1=11.5). Such values are
+    # artifacts, not measurements: replace them with the median of the
+    # credible ones. If NOTHING measured credibly, the measurement
+    # failed — return None so the option is skipped.
+    credible = [s for s in sigmas if s >= 2.0]
+    if not credible:
+        return None
+    fallback = sorted(credible)[len(credible) // 2]
+    return {f"sig{i}": (s if s >= 2.0 else fallback)
+            for i, s in enumerate(sigmas, start=1)}
 
 
 def _width_options(recipe, fit_ydata, peak_finder, scout_ratio):

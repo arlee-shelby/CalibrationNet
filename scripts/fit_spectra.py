@@ -113,7 +113,8 @@ def main() -> None:
     processed_keys = set() # every (run, seg, tf, pixel) this invocation saw
 
     def record_failure(pixel, recipe_label, stage, gate_numbers=None,
-                       attempts="", best_redchi="", figure=""):
+                       attempts="", best_redchi="", best_reason="",
+                       figure=""):
         failure_rows.append({
             "run": str(args.run), "segment": str(args.segment),
             "pixel": str(pixel), "tf_label": args.tf_label,
@@ -124,6 +125,7 @@ def main() -> None:
                                else f"{gate_numbers[1]:.0f}"),
             "attempts": str(attempts), "best_redchi":
                 ("" if best_redchi in ("", None) else f"{best_redchi:.2f}"),
+            "best_reason": best_reason,
             "figure": figure,
         })
 
