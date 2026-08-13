@@ -16,7 +16,10 @@ from scipy.signal import find_peaks
 
 RECIPES = {
     "Bi-207": [
-        dict(label="ce-6peak", bounds=(1200, 3300), n_peaks=6,
+        # Upper bound 3300 -> 3400 (AS ruling 2026-08-13): the 2026
+        # gain puts peak 6 at ~3255-3290 ADC and 3300 was chopping it
+        # (batch-1 review: 1023 cen6=3289 with sig6 blown to 26).
+        dict(label="ce-6peak", bounds=(1200, 3400), n_peaks=6,
              peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
              widths={"sig1": 3, "sig2": 3, "sig3": 3,
                      "sig4": 5, "sig5": 5, "sig6": 5},
@@ -38,7 +41,20 @@ RECIPES = {
              # anchors extraction uses. The other four peaks must sit
              # where the line energies place them between these two.
              anchor_peaks=(1, 4)),
-        dict(label="auger-2peak", bounds=(20, 180), n_peaks=2,
+        # Window (20, 180) -> (110, 250) (AS ruling 2026-08-13). The
+        # 2026 runs put the 56/68 keV pair at ~141-201 ADC at nominal
+        # gain (batch-1 review: every accepted Auger fit ran on a
+        # predicted window of ~(100, 250); accepted centroids 141-161
+        # and 181-201). The old window missed the upper peak entirely
+        # AND contained the curved Compton shoulder (dies out by ~100
+        # ADC), which the linear background cannot represent — the
+        # bottom at 110 keeps the shoulder out while leaving >=20 ADC
+        # of clean background below the lowest first-peak edge (~130).
+        # Old-style data with the pair at ~82/120 ADC is not orphaned:
+        # those lines fall outside this window, so the predicted-window
+        # pass fires and rebuilds ~(25, 177) around them — effectively
+        # the old window, now as the fallback instead of the default.
+        dict(label="auger-2peak", bounds=(110, 250), n_peaks=2,
              peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
              widths={"sig1": 3, "sig2": 3},
              # Measured first as a trial — compare it against the
@@ -74,6 +90,20 @@ RECIPES = {
 ERROR_THRESHOLDS = {"cen": 0.05, "sig": 0.50}
 MAX_REDCHI = 10
 SPACING_TOLERANCE = 0.35
+
+# Degenerate-covariance hardening (AS ruling 2026-08-13, from the
+# batch-1 false passes). A real peak is never narrower than 2 ADC bins
+# (the same credibility floor measure_peak_widths uses) — below that
+# the "peak" is a spike riding another structure (9409s2 p1023's CE
+# sig3=1.4). And a width KNOWN to better than 0.1% is not precision,
+# it is a collapsed covariance direction: the best genuine fits in the
+# 23-segment batch carry sig errors down to ~0.8% (high-stat CE
+# peaks), while the false passes sit at 0.027% (9415s0 p1041) and
+# 0.0035% (p1044) — 0.1% splits the two populations with ~8x margin on
+# the good side. (Those two are NOT stderr==0 exactly; the exact-zero
+# check below catches the fully-singular flavor of the same disease.)
+MIN_PEAK_WIDTH = 2.0
+MIN_SIG_RELATIVE_ERROR = 0.001
 
 # Nominal ADC<->keV relation at standard trap settings, from the gold
 # standard calibration (run 8622 pixel 60, docs/example_outputs.md):
@@ -307,15 +337,29 @@ def fit_is_good(result, recipe, prediction=None):
     stored (AS policy: a fit that fails it is retried, and if every
     attempt fails, nothing is stored). Returns (True, "") or
     (False, reason). Checks, in order: the fit converged; every fitted
-    parameter has an uncertainty; centroid and width errors are within
-    the recipe's thresholds; reduced chi2 is at or below the cap; the
-    fitted peaks sit where the known line energies place them (the
-    peak-spacing check above)."""
+    parameter has an uncertainty and none is exactly zero; every
+    fitted width is a credible peak width with a credible uncertainty
+    (MIN_PEAK_WIDTH / MIN_SIG_RELATIVE_ERROR above); centroid and
+    width errors are within the recipe's thresholds; reduced chi2 is
+    at or below the cap; the fitted peaks sit where the known line
+    energies place them (the peak-spacing check above)."""
     if not result.success:
         return False, "did not converge"
     for name in result.var_names:
-        if result.params[name].stderr is None:
+        par = result.params[name]
+        if par.stderr is None:
             return False, "no uncertainties (singular covariance)"
+        if par.stderr == 0:
+            return False, (f"{name} error is exactly 0 "
+                           "(degenerate covariance)")
+        if (name.startswith("sig") and abs(par.value) > 0
+                and par.stderr < MIN_SIG_RELATIVE_ERROR * abs(par.value)):
+            return False, (f"{name} error {par.stderr:.4f} on value "
+                           f"{par.value:.1f} is impossibly precise "
+                           "(degenerate covariance)")
+        if name.startswith("sig") and par.value < MIN_PEAK_WIDTH:
+            return False, (f"{name} {par.value:.2f} is below the "
+                           f"{MIN_PEAK_WIDTH:g} ADC credible peak width")
     thresholds = recipe.get("error_thresholds", ERROR_THRESHOLDS)
     for prefix, limit in thresholds.items():
         for name in sorted(result.params):

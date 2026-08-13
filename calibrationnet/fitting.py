@@ -208,8 +208,9 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
 
 def predicted_window(prediction, recipe, primary_bounds):
     """The window rescue: when the predicted line positions do NOT all
-    fit inside the recipe's window (short-trap offsets push the 68 keV
-    Auger line past the (20, 180) window; low gain can pull lines
+    fit inside the recipe's window (trap-setting/HV offsets shift the
+    Auger pair — e.g. the 2025-style ~82/120 ADC positions fall below
+    the 2026-tuned (110, 250) window; low gain can pull lines
     below it), build the window around where the pixel's own relation
     says the lines are: first line minus 1.5x the first line gap, last
     line plus 1.5x the last gap — the same margins the trusted recipe
