@@ -6,7 +6,9 @@ pick up any item without re-deriving the context. Companion documents:
 `docs/pipeline_roadmap.md` (the original pipeline design),
 `docs/cluster_resources.md` (GT vs NERSC job sizing),
 `scripts/offline/README.md` (offline pipeline usage + NERSC setup),
-`docs/fit_storage.md` (what a stored fit looks like).
+`docs/fit_storage.md` (what a stored fit looks like),
+`docs/fit_retry_ladder.md` (how the retry ladder decides every fit —
+the passes, rungs, gates, and quality check, in plain language).
 
 ---
 
@@ -84,8 +86,12 @@ run 9416 entered the database.
 - Measured starting widths (FWHM/2.355) with median repair of
   half-prominence artifacts (< 2 ADC bins).
 - Failure review: `fit_failures_summary.csv` (interesting failures
-  only) + per-run detail; concurrency-safe via flock (safe for SLURM
-  arrays sharing one summary).
+  only) + per-run detail; concurrency-safe via flock, with a sentinel
+  fallback on filesystems that refuse flock (NERSC $HOME, OSError 524
+  — found 2026-08-13: it had crashed every array task at its final
+  step, so batches 1 and 2 have complete fits CSVs but NO failure
+  summary; their failure info lives in the slurmout logs instead).
+  GT home + scratch verified flock-clean.
 - 2026 detector facts baked into understanding, not code: UDET tail
   beta ~8, LDET ~30-37; Auger offset ~+5 keV puts the 68 keV line at
   ~190-205 ADC (the Auger recipe window is (110, 250) as of
@@ -187,18 +193,88 @@ run 9416 entered the database.
       the reference pixels: bare 2025 Auger fits fail in the new
       window as expected (benchmark harness has no retry ladder), and
       the CE failure set is byte-identical before/after the change.
-- [ ] Rerun the full 23-segment array at NERSC
-      (`./scripts/offline/submit_fit_spectra_nersc.sh`, AS submits;
-      push the recipe/gate commit first so NERSC pulls it). Rerun
-      into a FRESH out dir (pass it as arg 2, e.g.
-      `offline_output/fits_2026b`) so fits_2026 stays as the
-      before-picture for acceptance-count comparison. Then review
-      acceptance counts + failure summary, AS eye pass.
-      Watch for: pixels whose previously-accepted fits the new gate
-      now rejects (1041/1044/1023 will retry — they may land on a
-      different attempt or fail honestly), and Auger acceptance on
-      the pixels that used to fail on the predicted-window pass
-      (80, 73 — good data that should now fit in-window).
+- [x] Batch-2 rerun done and reviewed (2026-08-13/14, local copies in
+      `offline_output/fits_2026{,b}/`). Results: all three false
+      passes dead (1041/1044/1023-Auger, plus 1032 — another
+      impossibly-precise case the review never flagged); the 3400
+      bound works (31 CE fits now hold a healthy peak 6 above 3250,
+      e.g. 1023 sig6 26 -> 8.0); CE acceptance 125 -> 126. AS eye
+      rulings on the width-floor CE losses: 1039/1051/96-s11/1091
+      should never have passed in batch 1 (gate vindicated);
+      1062/1079 borderline-acceptable-but-fine-to-lose. WATCH:
+      9416s1 p1069's CE fit (batch 1: good-looking blend, chi2r 1.78)
+      now fails the spacing check — AS judged the fit great by eye,
+      so check whether it returns on the next rerun.
+- [x] Auger window regression found and fixed (2026-08-14): batch 2
+      lost 17 Augers because pointing the recipe window at the 2026
+      peaks disabled the predicted-window pass (it only fired when
+      lines fell OUTSIDE the recipe window), and no fixed bottom
+      suits every pixel (bottom scan: 110 loses 1052/1053/106/62,
+      95 recovers 1052 but breaks 1010). Fix: recipe bottom 100 +
+      `predicted_window` now skips only on a same-window match, so
+      the per-pixel pass always backs up a failed recipe pass.
+      Validated from the DB: 1052/1053/62/106 all recover
+      (chi2r 0.97-1.16), control pixel 77 unchanged; 1010 (a
+      bottom-110-only catch, never a batch-1 fit) reverts to an
+      honest failure. Also: 80/73 Augers still fail in batch 2 —
+      genuinely hard, needs eye review of their failure figures.
+- [x] **NERSC track RETIRED (AS ruling 2026-08-14)**: GT is back, the
+      same data is ingested and verified equivalent, the engine is
+      shared, and NERSC fit files were never going to be ingested —
+      so all validation and production fitting moves to the DB on GT.
+      NERSC remains the documented fallback for the next GT outage
+      (scripts/offline/ + its README stay maintained). The fits_2026d
+      run submitted 2026-08-14 (window/gate fix, pre-width-rules) can
+      be glanced at when it lands but owes us nothing; fits_2026c was
+      a batch-2 replica (stale checkout) and can be deleted.
+      Historical note: 9409/9415/9416 join the GT campaign run list
+      (run_list_2026.txt), which supersedes the "rerun at NERSC"
+      loop and doubles as the DB-vs-offline parity check at scale.
+
+### 5.1b Findings from the 9469 5-segment test review (2026-08-14,
+### AS eye pass: "overall really really good"; plots in
+### fit_plots_test/9469/)
+- [x] **Statistics gate retuned (AS ruling 2026-08-14)**:
+      20000/200 -> 15000/300. Admits the strong-peaked short-dwell
+      pixels (9469 s0 p30, s26 p40 + ~9 similar across all recorded
+      skips) and gates out the marginal-height pixels (245-269) that
+      produced most narrow-width artifacts — removes exactly 4
+      borderline 9469 fits among everything currently accepted.
+      CAVEAT: of the four 2025 examples the original bar was chosen
+      from, one flips — 1031 (66k counts, height 211) is now gated
+      out by the height bar. It is 2025 LDET (the oddball, not
+      fitted in any campaign), and NO currently-accepted fit outside
+      the intended four is touched; if 200-300-height pixels matter
+      in some future dataset, the bar is one number in STATS_GATE.
+- [x] **"5 visible peaks" fits DECODED and FIXED — pancake phantoms
+      (1075 family)**: in s26 p86 and s40 p1053 the weak peak 3 never
+      separated from peak 2, so the fitter parked it as a huge
+      near-flat pancake (sig 93 / 37 vs siblings 4-8) with amplitude
+      consistent with ZERO (3.3+-9.2, 7.8+-11.8) — invisible in the
+      figure, hence "5 peaks". AS ruling 2026-08-14: reject. Added
+      `MAX_PEAK_WIDTH_RATIO = 3.0` to fit_is_good (widest peak vs the
+      fit's median width; fits with >= 3 peaks only — for 2-peak fits
+      the ratio is bounded < 2 by construction, so Augers are
+      untouched). Replayed over EVERY accepted fit (126 batch-2 CE +
+      all stored DB fits): rejects exactly the two 9469 pancakes,
+      the three hidden batch-2 pancakes (sig 175-201: 9415s11 p1038,
+      9416s1 p1049, 9416s2 p1031), and borderline 9415s10 p1027
+      (widest 26.3 vs median 6.2 — the known smeared-blend family;
+      AS may want to eye its batch-2 figure). Nothing else touched.
+- [x] **Relative width floor added (AS ruling 2026-08-14)**:
+      `MIN_PEAK_WIDTH_RATIO = 0.5` — narrowest peak must be >= 0.5x
+      the fit's median width (>= 3 peaks only, same guard as the
+      pancake cap; the absolute 2 ADC floor stays). Replay over all
+      accepted fits: rejects exactly the two worst 9469 narrow cases
+      (both p1054s, 0.39-0.41x) and four batch-2 fits (9409s5 p1015,
+      9415s0 p1048, 9415s7 p1073, 9416s3 p1009 — narrowest 2.6-3.5).
+      Rejected attempts retry through the ladder: demonstrated live
+      on 9415s10 p1027, whose pancake attempts were rejected until
+      the conditioned rescue produced a CLEAN accepted fit
+      (chi2r 1.80) — the width rules upgrade fits, not just cull
+      them. The remaining eye-borderline pixels (1043, 1062,
+      1055/1089 at 0.55x) are either gated out by the new stats
+      gate or survive as acceptable-borderline per AS.
 
 ### 5.2 Non-Bi sources (AS ruling 2026-08-13: NO source-aware fitting)
 - Source-aware fitting (a per-segment source map feeding recipe
@@ -261,32 +337,33 @@ run 9416 entered the database.
   SLURM array for DB fitting, same manifest/chunking pattern as the
   trap filter batch, 1 cpu / 8 GB / embers per task).
 
-### 6.1 Fitting campaigns (AS request 2026-08-13)
-- [ ] **Fall 2025 UDET refit** (runs in
-      `development/outputs/run_list.txt`, 106 runs 8622-8865):
-      `nabpy-standard` label, `--detector udet` (2025 LDET is the
-      oddball — not fitted; UDET is never fitted at the short-trap
-      label, existing ruling). Smoke-tested locally on 8622 seg0:
-      --detector works, 2025 Auger lines fall back to the predicted
-      window (27, 175) as designed, previously-frozen pixel 109
-      refits after the calibration wipe. AS submits:
-      `./scripts/submit_fit_spectra.sh development/outputs/run_list.txt
-      fit_plots_fall2025/ --detector udet`
-- [ ] **9469 (the optimized-positions segmented run, 54 segments,
-      4 Bi + 1 Cd)** — the pipeline once the trap filter ingest
-      finishes (in progress 2026-08-13, ~49/54 segments in):
-      1. `python scripts/pending_segments.py --runs 9469 --summary`
-      2. `python scripts/assign_sources.py` -> AS reviews/edits
-         `source_assignment_review.csv` -> `--apply`
-      3. fit BOTH detectors:
-         `./scripts/submit_fit_spectra.sh run_list.txt fit_plots_9469/`
-         (run_list.txt currently holds 9469)
-- [ ] After the offline batch is signed off: confirm DB fitting
-      reproduces the offline results on 9409/9415/9416 (expected:
-      identical — the DB copies differ only by dropped NaN events,
-      which never enter histograms).
-- [ ] Fit-result ingest for the NERSC-era file-based fits: do NOT —
-      superseded by refitting from DB data.
+### 6.1 The full fitting campaigns (GO 2026-08-14 — the "full test")
+Both eye-pass tests approved (Fall 2025 5-run test "very good";
+9469 5-segment test "really really good"). 9469 source assignment
+applied (1977 claims; seg 46 has zero claims and 29/49/50 nearly
+none — AS may revisit the review CSV later). Two submissions, both
+on GT from the repo root, env active, after pulling the final
+recipe commit. Run TOGETHER with MAX_SUBMIT=24 each (the embers QOS
+caps ~50 SUBMITTED tasks per user, and the two arrays would total
+~76 tasks at the default 40) — or sequentially with defaults:
+- [ ] **Fall 2025 UDET** (106 runs 8622-8865, one segment each):
+      `MAX_SUBMIT=24 ./scripts/submit_fit_spectra.sh
+       development/outputs/run_list.txt fit_plots_fall2025
+       --detector udet`
+- [ ] **2026 runs, both detectors** (9409/9415/9416/9469 = 77
+      segments; run_list_2026.txt; non-Bi pixels skip via their
+      assigned sources; doubles as the DB-vs-offline parity check):
+      `MAX_SUBMIT=24 ./scripts/submit_fit_spectra.sh
+       run_list_2026.txt fit_plots_2026`
+- [ ] Review: acceptance counts + `fit_failures_summary.csv` in each
+      plot dir, AS eye pass (incl. the 1069 watch item and 80/73
+      failure figures), then FITTING SIGN-OFF.
+- Housekeeping done 2026-08-14: stored dev fits deleted for the four
+  9469 pixels the retuned gate now excludes (s0 p1055/p1089,
+  s26 p1054/p1074) — gate-skipped pixels are never refit, so those
+  would have lingered stale.
+- Fit-result ingest for the NERSC-era file-based fits: do NOT —
+  superseded by refitting from DB data.
 
 ## 7. Quick-start for a fresh session
 

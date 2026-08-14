@@ -107,6 +107,25 @@ SPACING_TOLERANCE = 0.35
 MIN_PEAK_WIDTH = 2.0
 MIN_SIG_RELATIVE_ERROR = 0.001
 
+# The mirror of MIN_PEAK_WIDTH (AS ruling 2026-08-14): a "peak" many
+# times wider than its siblings is the fitter parking an unresolvable
+# weak line as a near-flat pancake that soaks background (9469 s26 p86:
+# sig3=93 with amp 3.3+-9.2 — amplitude consistent with zero — vs
+# sibling widths 4-6; batch-2 scan found accepted CE fits hiding
+# pancakes of sig 175-201). Genuine fits keep all six widths within
+# ~2x of their median. Applied to fits with >= 3 peaks only — for a
+# 2-peak fit the ratio to the median is bounded below 2 by
+# construction, so the check cannot fire there.
+MAX_PEAK_WIDTH_RATIO = 3.0
+# And the relative narrow side (AS ruling 2026-08-14): a peak far
+# NARROWER than its siblings is the same disease inverted — a weak
+# line pinched into a spike (9469 s0 p1054: sig3=2.52 on a 17-count
+# peak, 0.41x its fit's median width of 6.2; detector resolution
+# cannot vary that much between neighbouring lines). The absolute
+# 2 ADC floor above misses these when the fit's overall widths are
+# large. Same >= 3 peak guard as the ratio cap.
+MIN_PEAK_WIDTH_RATIO = 0.5
+
 # Nominal ADC<->keV relation at standard trap settings, from the gold
 # standard calibration (run 8622 pixel 60, docs/example_outputs.md):
 # keV = constant + gain*ADC. Used ONLY to PREDICT initial peak
@@ -151,12 +170,20 @@ def peak_finder_ladder(peak_finder):
         yield tuple(variant), note
 
 
-# C-3 statistics gate (AS, 2026-08-05): a pixel is fitted only when its
-# CE window carries enough signal. Chosen from the reference-pixel
-# numbers: includes 1017 (24k/308) and 1031 (66k/211), excludes 1018
-# (10k/40) and — deliberately, for now — 1030 (49k/177).
+# C-3 statistics gate (AS, 2026-08-05; retuned 2026-08-14): a pixel is
+# fitted only when its CE window carries enough signal. Retuned for the
+# shorter 2026 dwells (AS ruling): counts 20000 -> 15000 admits the
+# strong-peaked short-dwell pixels the old bar blocked (9469 s0 p30
+# 17471/434, s26 p40 19980/512 — missed by 20 counts), and height
+# 200 -> 300 keeps out the marginal-peak pixels that produced the
+# narrow-width artifacts (heights 245-269). Impact measured over every
+# recorded skip + accepted fit (2026-08-14): admits ~9 strong pixels
+# across all datasets, removes 4 borderline 9469 fits, and the original
+# 2025 reference cases keep their status: 1017 (24k/308) in,
+# 1018 (10k/40) out, 1030 (49k/177) still out; 1031 (66k/211) now
+# gated OUT by the height bar — the one 2025 example that flips.
 STATS_GATE = {
-    "Bi-207": {"min_window_counts": 20000, "min_peak_height": 200},
+    "Bi-207": {"min_window_counts": 15000, "min_peak_height": 300},
 }
 
 
@@ -374,6 +401,23 @@ def fit_is_good(result, recipe, prediction=None):
                 return False, (f"{name} error {par.stderr:.2f} on value "
                                f"{par.value:.1f} exceeds the "
                                f"{limit:.0%} limit")
+    sigs = [result.params[name].value for name in result.params
+            if name.startswith("sig")]
+    if len(sigs) >= 3:
+        srt = sorted(sigs)
+        mid = len(srt) // 2
+        median = (srt[mid] if len(srt) % 2
+                  else 0.5 * (srt[mid - 1] + srt[mid]))
+        if max(sigs) > MAX_PEAK_WIDTH_RATIO * median:
+            return False, (f"widest peak sig={max(sigs):.1f} is over "
+                           f"{MAX_PEAK_WIDTH_RATIO:g}x the fit's median "
+                           f"width {median:.1f} — a background pancake, "
+                           "not a peak")
+        if min(sigs) < MIN_PEAK_WIDTH_RATIO * median:
+            return False, (f"narrowest peak sig={min(sigs):.2f} is under "
+                           f"{MIN_PEAK_WIDTH_RATIO:g}x the fit's median "
+                           f"width {median:.1f} — a pinched spike, "
+                           "not a peak")
     max_redchi = recipe.get("max_redchi", MAX_REDCHI)
     if result.redchi > max_redchi:
         return False, f"reduced chi2 {result.redchi:.2f} > {max_redchi}"
