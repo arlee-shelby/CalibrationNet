@@ -290,25 +290,59 @@ run 9416 entered the database.
       simulation fits to exist first. Sn-113 recipe: 2-peak K/L
       (363.8/387.5) — not yet designed.
 
-### 5.3 Calibration step (blocked on fitting sign-off)
-- [ ] `scripts/offline/calibrate.py` currently takes one --kev CSV.
-      Needs: per-DETECTOR target selection from
-      `data/simulated_energies_Jin_simulations.csv` (origin
-      `Jin-simulation-UDET-30kV` for UDET pixels,
-      `Jin-simulation-LDET-1kV` for LDET), plus the per-RUN HV shift
-      **shift_keV = data_HV - simulation_HV** applied at calibration
-      time (never edit the CSV): run 9409 ran UDET at 0 kV and LDET at
-      0 kV -> +30 keV UDET, +1 keV LDET. 9415/9416 HV settings still
-      unconfirmed — read them from slow controls per run rather than
-      assuming.
+### 5.3 The remaining stages: adc_peaks -> kev_peaks -> calibrations
+(Reframed 2026-08-14 for the DB track — the offline calibrate.py note
+that used to live here is retired with the NERSC track. All stages
+run on the fits the 6.1 campaigns are storing right now.)
+
+**Stage 2 — adc_peaks (after fitting sign-off; tooling DONE):**
+- [ ] `scripts/extract_adc_peaks.py` is built and encodes the design:
+      centroids matched to lines in ascending order per window group,
+      validated against a per-pixel two-anchor ADC->keV line (CE
+      482/976, --tolerance-kev); unmatched peaks stored with NULL
+      line, never guessed; freeze semantics; re-run REPLACES. Run it
+      over every fitted run, then review match/NULL rates. Blends
+      (Cd/Ce) unsupported by design — Bi-only for now.
+
+**Stage 3 — kev_peaks (the remaining DESIGN work):**
+- [ ] Seed `data/simulated_energies_Jin_simulations.csv` via
+      `scripts/seed_decay_energies.py <path>` (it versions kev_peaks
+      rows and carries the origin strings; verify nothing in it
+      assumes NNDC-only origins). 8 lines x 2 detectors, with errors.
+- [ ] Teach `scripts/calibrate.py` detector-aware target selection:
+      UDET pixels (1-127) pair with `Jin-simulation-UDET-30kV` rows,
+      LDET (1001-1127) with `Jin-simulation-LDET-1kV`. The current
+      policy (source-bound row else newest NNDC) cannot express this:
+      the SAME physical source needs different targets per detector.
+- [ ] Per-run HV shift applied at CALIBRATION time (never edit the
+      CSV). `runs.hv` is populated and coherent: 8622 (Fall 2025)
+      -27.0, 9409/9415/9416 0.0, 9469 +27.03 -> UDET shifts ~+3 keV
+      (Fall 2025, 9469) and +30 keV (HV-off runs) vs the 30 kV
+      simulation; LDET is 1 kV when HV is on, 0 when off (confirm
+      against slow controls). TWO SIGN CHECKS at implementation time:
+      the hv column's sign convention differs between eras (8622 is
+      -27, 9469 is +27), and the shift direction must be validated
+      once against a real fitted line before trusting any formula.
 - [ ] The Jin values are NOT final: his simulation used a different
       fit function. When the simulation is refit with the frozen fit
-      function, only the CSV values change and calibration re-runs on
-      the stored ADC centroids — fits never depend on target values.
+      function, only the CSV reseeds (new kev_peaks rows — old rows
+      and their calibration_points stay for provenance) and
+      calibrations re-run on unchanged ADC centroids.
 - [ ] NNDC physical energies (data/decay_energies.csv) remain the ONLY
       source for fit predictions. Mixing simulation rows into that
       file silently disables all prediction-based retries (happened
       2026-08-13; the files are now separate — keep them separate).
+
+**Stage 4 — calibrations (tooling DONE, waits on stage 3):**
+- [ ] `scripts/calibrate.py` already does weighted LSQ (linear +
+      quadratic, scale_covar=False per convention), >= 3 points,
+      per-point provenance (each CalibrationPoint records its
+      adc_peak AND kev_peaks row), is_current blessing, REPLACE
+      semantics. After the stage-3 pairing lands: run at scale,
+      verify against the 8622 p60 gold standard
+      (docs/example_outputs.md), AS review. The clean slate already
+      happened (6.0), so this first full calibration set is produced
+      entirely by the vetted pipeline.
 
 ### 5.4 Low gain
 - [ ] Pixel 1106 (9409, 0.383x) still fails everything — the low-gain
