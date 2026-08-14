@@ -207,32 +207,38 @@ def fit_from_predicted_start(data, bounds, n_peaks, widths, energies,
 
 
 def predicted_window(prediction, recipe, primary_bounds):
-    """The window rescue: when the predicted line positions do NOT all
-    fit inside the recipe's window (trap-setting/HV offsets shift the
-    Auger pair — e.g. the 2025-style ~82/120 ADC positions fall below
-    the 2026-tuned (110, 250) window; low gain can pull lines
-    below it), build the window around where the pixel's own relation
-    says the lines are: first line minus 1.5x the first line gap, last
-    line plus 1.5x the last gap — the same margins the trusted recipe
-    windows have at standard settings. Clamped to (20, 4490); the low
-    clamp keeps the hardware threshold region out.
+    """The window rescue: build the fit window around where the
+    pixel's OWN relation says the lines are — first line minus 1.5x
+    the first line gap, last line plus 1.5x the last gap, the same
+    margins the trusted recipe windows have at standard settings.
+    Clamped to (20, 4490); the low clamp keeps the hardware threshold
+    region out. This is what absorbs era/pixel differences one fixed
+    recipe window cannot (2025 Augers at ~82/120 ADC vs 2026 at
+    ~141-201, and 10-20 ADC pixel-to-pixel spread in the background
+    context a fit needs).
 
-    Returns (lo, hi), or None when every line already fits the recipe
-    window (then the extra pass would just repeat the same attempts)."""
+    Returns (lo, hi), or None when the window it would build is
+    essentially the recipe window already (both edges within 5 ADC) —
+    only then would the extra pass repeat the same attempts. (Until
+    2026-08-13 the pass was skipped whenever the predicted lines
+    merely fit INSIDE the recipe window; that stranded pixels whose
+    peaks were in-window but whose leading background was not — the
+    batch-2 Auger losses. AS ruling 2026-08-14: skip only on a
+    same-window match.)"""
     energies, relation, pred_ratio, _tag = prediction
     n = recipe["n_peaks"]
     if len(energies) != n or n < 2:
         return None
     preds = [pred_ratio * (e - relation["constant_kev"])
              / relation["gain_kev_per_adc"] for e in energies]
-    if all(primary_bounds[0] + 5 < p < primary_bounds[1] - 5
-           for p in preds):
-        return None
     lo = preds[0] - 1.5 * (preds[1] - preds[0])
     hi = preds[-1] + 1.5 * (preds[-1] - preds[-2])
     lo = max(20, int(round(lo)))
     hi = min(4490, int(round(hi)))
     if hi - lo < 10 * n:
+        return None
+    if (abs(lo - primary_bounds[0]) <= 5
+            and abs(hi - primary_bounds[1]) <= 5):
         return None
     return lo, hi
 
@@ -740,11 +746,39 @@ def update_failure_csv(path, rows, processed_keys, stages=None):
     The whole read-merge-write holds an exclusive lock on a sidecar
     .lock file: concurrent fitting jobs (e.g. one SLURM array task per
     segment, all sharing one summary CSV) would otherwise overwrite
-    each other's rows and silently lose failures."""
+    each other's rows and silently lose failures. flock where the
+    filesystem supports it; NERSC's $HOME does NOT (OSError errno 524
+    — discovered 2026-08-13 after it silently crashed every array task
+    of the first two fit batches at their final step, so no failure
+    summary was ever written there; GT home/scratch verified fine).
+    There the fallback is the same mutual exclusion via exclusive
+    CREATION of a sentinel file, which every filesystem supports. A
+    sentinel orphaned by a hard-killed task would block forever, so
+    after 120 s of waiting it is stolen with a printed warning."""
     import fcntl
+    import os
+    import time
     lock_path = path.with_name(path.name + ".lock")
-    with open(lock_path, "w") as lock:
+    lock = open(lock_path, "w")
+    sentinel = None
+    try:
         fcntl.flock(lock, fcntl.LOCK_EX)
+    except OSError:
+        sentinel = str(lock_path) + ".excl"
+        waited = 0.0
+        while True:
+            try:
+                os.close(os.open(sentinel,
+                                 os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                if waited >= 120.0:
+                    print(f"    (lock {sentinel} held for {waited:.0f} s "
+                          "— stealing it; a task died without cleanup)")
+                    break
+                time.sleep(0.2)
+                waited += 0.2
+    try:
         kept = []
         if path.exists():
             with open(path, newline="") as fh:
@@ -762,4 +796,8 @@ def update_failure_csv(path, rows, processed_keys, stages=None):
             writer = csv.DictWriter(fh, fieldnames=FAILURE_FIELDS)
             writer.writeheader()
             writer.writerows(merged)
+    finally:
+        lock.close()          # releases the flock when it was taken
+        if sentinel is not None and os.path.exists(sentinel):
+            os.remove(sentinel)
 

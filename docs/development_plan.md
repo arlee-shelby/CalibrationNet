@@ -48,10 +48,11 @@ run 9416 entered the database.
    pixel in the failure file that demonstrably needs one (the recipe
    has a comment where `retry_beta` would go).
 4. **2025 LDET data is an oddball** — never build development on it.
-5. **Nothing currently in `spectrum_fits`/`calibrations` is final** —
-   all development output. The endgame is a clean slate: delete dev
-   calibrations + fits, refit everything fresh with the vetted
-   pipeline (section 6).
+5. **The clean slate happened 2026-08-13**: every dev calibration and
+   spectrum fit was deleted (see 6.0). `spectrum_fits`/`calibrations`
+   now only ever hold output of the 2026-08-13-or-later pipeline;
+   re-running a fit REPLACES the stored one, so recipe fixes are
+   absorbed by resubmitting, not by another wipe.
 6. **AS pushes git commits and submits SLURM jobs manually** — prepare
    scripts and commands, do not run them for them. No conda, ever.
 
@@ -240,30 +241,52 @@ run 9416 entered the database.
 
 ## 6. TO DO — online (database) track
 
-- [ ] **Port nothing — the engine is shared.** The DB driver
-      `scripts/fit_spectra.py` uses the same `calibrationnet/fitting.py`
-      + recipes, so the 5.1 fixes apply to both tracks automatically.
-      After the offline batch is signed off, run the DB fitting against
-      the ingested 2026 data and confirm it reproduces the offline
-      results (expected: identical — the DB copies differ only by
-      dropped NaN events, which never enter histograms).
-- [ ] **9464 processing** (76 segments, 5-slot installation, filter
-      data already ingested): source assignment
-      (`scripts/assign_sources.py`, trend+counts joint method,
-      cluster-level claims) and per-pixel optimal positions
-      (`scripts/optimal_positions.py`). This is the installation the
-      user eye-verified hitmaps for (seg 30 notes in the session
-      history / memory).
-- [ ] **HV bookkeeping**: calibration needs each run's detector HV.
-      Decide where it lives (slow controls lookup at calibration time
-      vs a column on runs) and implement.
-- [ ] **Clean slate (the FINAL step, after everything above is vetted)**:
-      delete all dev calibrations (un-freezes fits), then all
-      spectrum_fits (adc_peaks go with them), refit every wanted run
-      fresh from the database, then calibrations from the vetted
-      simulated targets. Only after this is anything in the DB final.
+### 6.0 State changes 2026-08-13 (second half of the day)
+- **Clean slate EXECUTED** (AS ruling — everything stored so far was
+  development): all 14 calibrations, 82 calibration points, 62
+  spectrum fits, and 78 adc_peaks deleted. The DB now holds NO fits
+  and NO calibrations; nothing is frozen. Everything stored from here
+  on comes from the 2026-08-13 recipes (and re-running REPLACES
+  same-label fits, so a future recipe fix just means resubmitting).
+- **9464 is a RASTER run** (~2-minute dwell points): statistics are
+  below the fitting gate everywhere, and it is NOT a fitting target.
+  Its purpose was per-pixel optimal positions, which were derived and
+  then USED for run 9469's segmented installation. Its source
+  assignment is done (5 sources: 4 Bi + 1 Cd, 2325 claims).
+- **HV bookkeeping is already solved in the schema**: runs carries an
+  `hv` column populated at seeding (9464/9469: 27.0, 9402: 0.0) —
+  calibrate-time code should read it from there, not slow controls.
+- New tooling: `scripts/fit_spectra.py --detector {udet,ldet}` filter;
+  `scripts/submit_fit_spectra.sh` + `scripts/fit_spectra.sh` (PACE
+  SLURM array for DB fitting, same manifest/chunking pattern as the
+  trap filter batch, 1 cpu / 8 GB / embers per task).
+
+### 6.1 Fitting campaigns (AS request 2026-08-13)
+- [ ] **Fall 2025 UDET refit** (runs in
+      `development/outputs/run_list.txt`, 106 runs 8622-8865):
+      `nabpy-standard` label, `--detector udet` (2025 LDET is the
+      oddball — not fitted; UDET is never fitted at the short-trap
+      label, existing ruling). Smoke-tested locally on 8622 seg0:
+      --detector works, 2025 Auger lines fall back to the predicted
+      window (27, 175) as designed, previously-frozen pixel 109
+      refits after the calibration wipe. AS submits:
+      `./scripts/submit_fit_spectra.sh development/outputs/run_list.txt
+      fit_plots_fall2025/ --detector udet`
+- [ ] **9469 (the optimized-positions segmented run, 54 segments,
+      4 Bi + 1 Cd)** — the pipeline once the trap filter ingest
+      finishes (in progress 2026-08-13, ~49/54 segments in):
+      1. `python scripts/pending_segments.py --runs 9469 --summary`
+      2. `python scripts/assign_sources.py` -> AS reviews/edits
+         `source_assignment_review.csv` -> `--apply`
+      3. fit BOTH detectors:
+         `./scripts/submit_fit_spectra.sh run_list.txt fit_plots_9469/`
+         (run_list.txt currently holds 9469)
+- [ ] After the offline batch is signed off: confirm DB fitting
+      reproduces the offline results on 9409/9415/9416 (expected:
+      identical — the DB copies differ only by dropped NaN events,
+      which never enter histograms).
 - [ ] Fit-result ingest for the NERSC-era file-based fits: do NOT —
-      superseded by the clean-slate refit from DB data.
+      superseded by refitting from DB data.
 
 ## 7. Quick-start for a fresh session
 

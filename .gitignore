@@ -25,3 +25,4 @@ bc_maps*.csv
 data/TrapFilterData/
 slurmoutputs/
 offline_output/
+fit_plots_test/

@@ -68,6 +68,13 @@ def main() -> None:
                              "the segment with a trap filter output")
     parser.add_argument("--tf-label", default="nabpy-standard",
                         help="which trap filter outputs to fit")
+    parser.add_argument("--detector", choices=("udet", "ldet"),
+                        default=None,
+                        help="fit only this detector's pixels (udet: "
+                             "1-127, ldet: 1001-1127); default both. "
+                             "E.g. the Fall 2025 campaign fits UDET "
+                             "only at nabpy-standard — 2025 LDET is "
+                             "the known oddball (AS ruling).")
     parser.add_argument("--isotope", default=None,
                         help="force this isotope's recipes instead of "
                              "using each pixel's assigned source")
@@ -141,6 +148,10 @@ def main() -> None:
         )
         if args.pixels:
             query = query.where(RunPixel.pixel_number.in_(args.pixels))
+        if args.detector == "udet":
+            query = query.where(RunPixel.pixel_number < 1000)
+        elif args.detector == "ldet":
+            query = query.where(RunPixel.pixel_number >= 1000)
         pairs = session.execute(query).all()
         lines_by_isotope = {}
         if not pairs:

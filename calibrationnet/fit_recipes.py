@@ -41,20 +41,22 @@ RECIPES = {
              # anchors extraction uses. The other four peaks must sit
              # where the line energies place them between these two.
              anchor_peaks=(1, 4)),
-        # Window (20, 180) -> (110, 250) (AS ruling 2026-08-13). The
-        # 2026 runs put the 56/68 keV pair at ~141-201 ADC at nominal
-        # gain (batch-1 review: every accepted Auger fit ran on a
-        # predicted window of ~(100, 250); accepted centroids 141-161
-        # and 181-201). The old window missed the upper peak entirely
+        # Window (20, 180) -> (100, 250) (AS rulings 2026-08-13/14).
+        # The 2026 runs put the 56/68 keV pair at ~141-201 ADC at
+        # nominal gain: the old window missed the upper peak entirely
         # AND contained the curved Compton shoulder (dies out by ~100
-        # ADC), which the linear background cannot represent — the
-        # bottom at 110 keeps the shoulder out while leaving >=20 ADC
-        # of clean background below the lowest first-peak edge (~130).
-        # Old-style data with the pair at ~82/120 ADC is not orphaned:
-        # those lines fall outside this window, so the predicted-window
-        # pass fires and rebuilds ~(25, 177) around them — effectively
-        # the old window, now as the fallback instead of the default.
-        dict(label="auger-2peak", bounds=(110, 250), n_peaks=2,
+        # ADC), which the linear background cannot represent. The
+        # bottom is measured, not guessed: batch-1's accepted Auger
+        # fits ran on per-pixel windows with bottoms 91-107, and a
+        # bottom scan showed no single value suits every pixel (110
+        # loses 1052/1053/106; 95 recovers 1052 but breaks 1010).
+        # 100 recovers the most on its own, and the pixel-to-pixel
+        # spread is absorbed by the predicted-window pass, which since
+        # 2026-08-14 always runs after the recipe window fails (see
+        # fitting.py::predicted_window). Old-style data with the pair
+        # at ~82/120 ADC lands on that same pass (~(25, 177) — in
+        # effect the old window, now the fallback, not the default).
+        dict(label="auger-2peak", bounds=(100, 250), n_peaks=2,
              peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
              widths={"sig1": 3, "sig2": 3},
              # Measured first as a trial — compare it against the
