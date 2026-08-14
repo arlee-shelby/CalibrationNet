@@ -153,6 +153,13 @@ def main() -> None:
                         help='calibration attempt name (default '
                              '"simulation" — targets are simulation-'
                              'frame values with the run-HV shift)')
+    parser.add_argument("--recipes", nargs="+", default=None,
+                        metavar="FIT_LABEL",
+                        help="use only peaks from these fits (e.g. "
+                             "ce-6peak for a CE-only calibration); "
+                             "default: every fit's peaks. Pair with "
+                             "--label and --no-current to store such "
+                             "variants alongside the full calibration")
     parser.add_argument("--min-points", type=int, default=3,
                         help="fewest matched points that still make a "
                              "calibration (default 3)")
@@ -193,20 +200,34 @@ def main() -> None:
 
         for rp, tfo in session.execute(query).all():
             detector = "upper" if rp.pixel_number < 1000 else "lower"
-            peaks = session.scalars(
+            # runs.hv is the MAIN (UDET-side) HV. LDET floats at its
+            # own small bias and does NOT follow it — validated
+            # 2026-08-14: same-pixel LDET centroids are identical
+            # between HV-0 and HV-27 runs. LDET HV has never been
+            # powered, so its effective HV is 0 until it ever is
+            # (then it needs its own runs column/slow-controls read).
+            # (Bug fixed 2026-08-14: applying the main HV to LDET
+            # targets shifted every HV-on LDET offset to ~-26 keV.)
+            pixel_hv = run_hv if detector == "upper" else 0
+            peaks_stmt = (
                 select(ADCPeak)
                 .join(SpectrumFit,
                       ADCPeak.spectrum_fit_id == SpectrumFit.id)
                 .where(SpectrumFit.trap_filter_output_id == tfo.id,
                        ADCPeak.isotope_decay_energy_id.is_not(None))
-            ).all()
+            )
+            if args.recipes:
+                peaks_stmt = peaks_stmt.where(
+                    SpectrumFit.label.in_(args.recipes))
+            peaks = session.scalars(peaks_stmt).all()
             if not peaks:
                 continue
 
             points, pairs, dropped, shifts, families = [], [], [], set(), set()
             for peak in sorted(peaks, key=lambda q: q.centroid_adc):
                 kev_row, shift = choose_kev(peak.isotope_decay_energy,
-                                            rp.source_id, detector, run_hv)
+                                            rp.source_id, detector,
+                                            pixel_hv)
                 if peak.centroid_error_adc is None:
                     dropped.append(peak.isotope_decay_energy.label)
                     continue
@@ -244,8 +265,10 @@ def main() -> None:
                       extra_config={
                           "detector": detector,
                           "run_hv_kv": run_hv,
+                          "detector_hv_kv": pixel_hv,
                           "hv_shift_kev": sorted(shifts),
                           "kev_family": sorted(families),
+                          "recipes": args.recipes or "all",
                       })
                 made += 1
                 p = result.params

@@ -396,9 +396,16 @@ def calibration_map(run_numbers=None, calibration_type="linear",
     import pandas as pd
 
     def _query(s):
+        # Columns only + one grouped count — never whole ORM rows with
+        # per-row lazy loads (see calibration_summary for the story).
         stmt = (
             select(RunPixel.run_number, RunPixel.segment_index,
-                   RunPixel.pixel_number, Calibration)
+                   RunPixel.pixel_number, Calibration.id,
+                   Calibration.calibration_type, Calibration.label,
+                   Calibration.constant_term, Calibration.constant_error,
+                   Calibration.linear_term, Calibration.linear_error,
+                   Calibration.quadratic_term, Calibration.reduced_chi2,
+                   Calibration.config)
             .join(Calibration, Calibration.run_pixel_id == RunPixel.id)
             .order_by(RunPixel.run_number, RunPixel.segment_index,
                       RunPixel.pixel_number))
@@ -411,20 +418,23 @@ def calibration_map(run_numbers=None, calibration_type="linear",
             stmt = stmt.where(Calibration.is_current)
         if label is not None:
             stmt = stmt.where(Calibration.label == label)
+        point_counts = dict(s.execute(
+            select(CalibrationPoint.calibration_id,
+                   func.count(CalibrationPoint.id))
+            .group_by(CalibrationPoint.calibration_id)).all())
         rows = []
-        for run, seg, pix, cal in s.execute(stmt).all():
+        for (run, seg, pix, cal_id, cal_type, cal_label, const,
+             const_err, gain, gain_err, quad, redchi,
+             config) in s.execute(stmt).all():
             rows.append({
                 "run": run, "segment": seg, "pixel": pix,
-                "detector": _detector_of(pix), "type":
-                    cal.calibration_type, "label": cal.label,
-                "constant_kev": cal.constant_term,
-                "constant_error": cal.constant_error,
-                "gain_kev_per_adc": cal.linear_term,
-                "gain_error": cal.linear_error,
-                "quadratic": cal.quadratic_term,
-                "reduced_chi2": cal.reduced_chi2,
-                "n_points": len(cal.points),
-                "run_hv_kv": (cal.config or {}).get("run_hv_kv"),
+                "detector": _detector_of(pix), "type": cal_type,
+                "label": cal_label,
+                "constant_kev": const, "constant_error": const_err,
+                "gain_kev_per_adc": gain, "gain_error": gain_err,
+                "quadratic": quad, "reduced_chi2": redchi,
+                "n_points": point_counts.get(cal_id, 0),
+                "run_hv_kv": (config or {}).get("run_hv_kv"),
             })
         return pd.DataFrame(rows)
     return _with_session(_query, session)
@@ -491,5 +501,127 @@ def source_map(run, segment=0, session=None):
                          "detector": _detector_of(rp.pixel_number),
                          "isotope": rp.source.isotope.name,
                          "source": rp.source.label})
+        return pd.DataFrame(rows)
+    return _with_session(_query, session)
+
+
+def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
+                        detector=None, calibration_type="linear",
+                        current_only=True, session=None):
+    """The group-meeting table (AS request 2026-08-14): one row per
+    stored calibration with everything the standard errorbar plots
+    need — gain +- error (keV/ADC), offset/constant +- error (keV),
+    and the CE 976 peak width from the SAME pixel's CE fit, in ADC
+    and in keV (sigma x gain). Call once per dataset for individually
+    colorable sets:
+
+        fall = list(range(8622, 8866))
+        udet_fall = calibration_summary(fall, "nabpy-standard", "upper")
+        ldet_fall = calibration_summary(fall, "short-trap-Fall2025",
+                                        "lower")
+        udet_9469 = calibration_summary([9469], detector="upper")
+        ldet_9469 = calibration_summary([9469], detector="lower")
+        plt.errorbar(udet_fall.pixel, udet_fall.gain_kev_per_adc,
+                     yerr=udet_fall.gain_error, fmt="o", label="...")
+
+    A pixel calibrated in several runs/segments appears once per
+    calibration (the run/segment columns tell them apart — plot as-is
+    for a stability view, or groupby('pixel') to reduce)."""
+    import pandas as pd
+
+    def _query(s):
+        # Exactly TWO queries, and only the needed COLUMNS: pulling
+        # whole ORM rows here shipped every fit's covariance matrix
+        # and lazy-loaded each calibration's points one round-trip at
+        # a time — minutes over an ssh tunnel for thousands of rows.
+        stmt = (
+            select(RunPixel.run_number, RunPixel.segment_index,
+                   RunPixel.pixel_number, Calibration.id,
+                   Calibration.linear_term, Calibration.linear_error,
+                   Calibration.constant_term, Calibration.constant_error,
+                   Calibration.reduced_chi2,
+                   SpectrumFit.pars, SpectrumFit.par_errors)
+            .join(Calibration, Calibration.run_pixel_id == RunPixel.id)
+            .join(TrapFilterOutput,
+                  TrapFilterOutput.id == Calibration.trap_filter_output_id)
+            .join(SpectrumFit,
+                  (SpectrumFit.trap_filter_output_id
+                   == Calibration.trap_filter_output_id)
+                  & (SpectrumFit.label == "ce-6peak"))
+            .where(Calibration.calibration_type == calibration_type)
+            .order_by(RunPixel.run_number, RunPixel.segment_index,
+                      RunPixel.pixel_number))
+        if run_numbers is not None:
+            stmt = stmt.where(RunPixel.run_number.in_(run_numbers))
+        if tf_label is not None:
+            stmt = stmt.where(TrapFilterOutput.label == tf_label)
+        if current_only:
+            stmt = stmt.where(Calibration.is_current)
+        if detector == "upper":
+            stmt = stmt.where(RunPixel.pixel_number < 1000)
+        elif detector == "lower":
+            stmt = stmt.where(RunPixel.pixel_number >= 1000)
+        point_counts = dict(s.execute(
+            select(CalibrationPoint.calibration_id,
+                   func.count(CalibrationPoint.id))
+            .group_by(CalibrationPoint.calibration_id)).all())
+        rows = []
+        for (run, seg, pix, cal_id, gain, gain_err, const, const_err,
+             redchi, pars, par_errors) in s.execute(stmt).all():
+            sig = (pars or {}).get("sig4")
+            sig_err = (par_errors or {}).get("sig4")
+            rows.append({
+                "run": run, "segment": seg, "pixel": pix,
+                "detector": _detector_of(pix),
+                "gain_kev_per_adc": gain,
+                "gain_error": gain_err,
+                "constant_kev": const,
+                "constant_error": const_err,
+                "ce976_sigma_adc": sig,
+                "ce976_sigma_error_adc": sig_err,
+                "ce976_sigma_kev": (sig * gain if sig and gain else None),
+                "ce976_sigma_error_kev":
+                    (sig_err * gain if sig_err and gain else None),
+                "reduced_chi2": redchi,
+                "n_points": point_counts.get(cal_id, 0),
+            })
+        return pd.DataFrame(rows)
+    return _with_session(_query, session)
+
+
+def peak_table(run, pixel, segment=0, tf_label="nabpy-standard",
+               session=None):
+    """Every stored adc_peak for one pixel: which recipe fitted it,
+    which decay line it matched (or None), centroid/sigma/amplitude
+    with uncertainties — the spectrum-fit numbers behind every
+    calibration point."""
+    import pandas as pd
+
+    def _query(s):
+        rows = []
+        stmt = (
+            select(SpectrumFit.label, ADCPeak)
+            .join(SpectrumFit,
+                  ADCPeak.spectrum_fit_id == SpectrumFit.id)
+            .join(TrapFilterOutput,
+                  SpectrumFit.trap_filter_output_id == TrapFilterOutput.id)
+            .join(RunPixel, TrapFilterOutput.run_pixel_id == RunPixel.id)
+            .where(RunPixel.run_number == run,
+                   RunPixel.segment_index == segment,
+                   RunPixel.pixel_number == pixel,
+                   TrapFilterOutput.label == tf_label)
+            .order_by(ADCPeak.centroid_adc))
+        for recipe, peak in s.execute(stmt).all():
+            line = peak.isotope_decay_energy
+            rows.append({
+                "recipe": recipe,
+                "line": line.label if line is not None else None,
+                "centroid_adc": peak.centroid_adc,
+                "centroid_error_adc": peak.centroid_error_adc,
+                "sigma_adc": peak.sigma_adc,
+                "sigma_error_adc": peak.sigma_error_adc,
+                "amplitude": peak.amplitude,
+                "amplitude_error": peak.amplitude_error,
+            })
         return pd.DataFrame(rows)
     return _with_session(_query, session)
