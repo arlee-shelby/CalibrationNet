@@ -5,10 +5,20 @@ of the trap setting, so points from different outputs never mix):
 
 1. Collect the output's matched adc_peaks (scripts/extract_adc_peaks.py)
    across all of its fits — CE and Auger windows together.
-2. Pair each peak with a keV value: a kev_peaks row bound to the pixel's
-   physical source when one exists (simulation-corrected values), else
-   the newest generic NNDC row. The exact row used is recorded per point,
-   so the calibration stays reproducible whatever gets seeded later.
+2. Pair each peak with a keV value (AS design 2026-08-14): SIMULATION
+   rows only — detected-energy frame, never mixed with NNDC physical
+   energies (those exist for fit predictions, not calibration). The
+   most specific row wins: bound to the pixel's source AND detector,
+   else detector-specific, preferring an exact simulation-HV match;
+   the per-run HV shift target = value + (row_HV - run_HV) keV (HV
+   magnitudes — readback reports +27 for -27 kV; run HV rounded to
+   integer) is applied at calibration time and recorded in config.
+   Validated 2026-08-14: same pixels in 9409 (HV 0) vs 9469 (HV 27)
+   show +27.4 keV displacement on UDET, ~0 on LDET. A line with NO
+   simulation value is a hard error (cannot happen for Bi-207 — all
+   8 lines seeded per detector). The exact row used is recorded per
+   point, so the calibration stays reproducible whatever gets seeded
+   later.
 3. Require at least --min-points points (default 3 — two or fewer of
    eight is never enough). Peaks without a centroid error are excluded:
    they cannot be weighted.
@@ -42,24 +52,51 @@ from sqlalchemy import select
 
 from calibrationnet.db import get_session
 from calibrationnet.models import (ADCPeak, Calibration, CalibrationPoint,
-                                   RunPixel, SpectrumFit, TrapFilterOutput)
+                                   Run, RunPixel, SpectrumFit,
+                                   TrapFilterOutput)
 
-KEV_POLICY = ("kev_peaks row bound to the pixel's source if present, "
-              "else newest generic NNDC row")
+KEV_POLICY = ("simulation kev_peaks rows only (detected-energy frame; "
+              "NNDC never mixed in): most specific of source+detector > "
+              "detector-only, exact simulation-HV match preferred, "
+              "newest last; target = value + (row_HV - run_HV) keV in "
+              "HV magnitudes, run HV rounded to integer")
 
 
-def choose_kev(line, source_id):
-    """The keV row to calibrate against for this decay line."""
-    bound = [p for p in line.kev_peaks if p.source_id == source_id]
-    if source_id is not None and bound:
-        return max(bound, key=lambda p: p.created_at)
-    generic = [p for p in line.kev_peaks
-               if p.source_id is None and p.origin == "nndc"]
-    return max(generic, key=lambda p: p.created_at) if generic else None
+def choose_kev(line, source_id, detector, run_hv):
+    """The simulation keV row for this decay line, plus the run-HV
+    shift in keV to add to its value.
+
+    Candidates are simulation rows never bound to a DIFFERENT source
+    and never to the OTHER detector. The most specific wins: bound to
+    this pixel's source and detector > detector-only; an exact
+    simulation-HV match beats canonical-HV-plus-shift; newest row
+    last. shift = row_HV - run_HV in magnitudes (sign validated
+    2026-08-14: 9409 [HV 0] vs 9469 [HV 27] same-pixel displacement,
+    +27.4 keV on UDET, ~0 on LDET). A line with no simulation row is
+    a HARD ERROR (AS ruling: cannot happen — all Bi-207 lines are
+    seeded per detector; provision only if this ever fires)."""
+    sims = [p for p in line.kev_peaks
+            if p.origin == "simulation"
+            and p.source_id in (None, source_id)
+            and p.detector in (None, detector)]
+    if not sims:
+        raise SystemExit(
+            f"ERROR: no simulated keV value for decay line "
+            f"{line.label!r} (detector {detector}) — calibration "
+            "targets must all come from the simulation frame. Seed "
+            "them first: python scripts/seed_decay_energies.py "
+            "<csv> --version <family>.")
+    best = max(sims, key=lambda p: (
+        source_id is not None and p.source_id == source_id,
+        p.detector == detector,
+        p.hv_kv == run_hv,
+        p.created_at))
+    shift = (best.hv_kv - run_hv) if best.hv_kv is not None else 0
+    return best, shift
 
 
 def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
-          min_points):
+          min_points, extra_config=None):
     """One Calibration row + its points, replacing a same-keyed one."""
     for old in session.scalars(
             select(Calibration)
@@ -93,7 +130,8 @@ def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
                     if result.covar is not None else None),
         config={"kev_selection": KEV_POLICY, "min_points": min_points,
                 "weighting": "sigma = gain*centroid_err (+) kev_err, "
-                             "gain refined once"},
+                             "gain refined once",
+                **(extra_config or {})},
         is_current=make_current,
     )
     session.add(calibration)
@@ -111,8 +149,10 @@ def main() -> None:
     parser.add_argument("--segment", type=int, default=0)
     parser.add_argument("--pixels", type=int, nargs="+", default=None)
     parser.add_argument("--tf-label", default="nabpy-standard")
-    parser.add_argument("--label", default="nndc",
-                        help='calibration attempt name (default "nndc")')
+    parser.add_argument("--label", default="simulation",
+                        help='calibration attempt name (default '
+                             '"simulation" — targets are simulation-'
+                             'frame values with the run-HV shift)')
     parser.add_argument("--min-points", type=int, default=3,
                         help="fewest matched points that still make a "
                              "calibration (default 3)")
@@ -127,6 +167,18 @@ def main() -> None:
 
     made = skipped = 0
     with get_session() as session:
+        # The run's HV, for the target shift: magnitude (readback
+        # convention: reported +27 means -27 kV) rounded to an integer
+        # (27.03 is readback jitter, not physics) — AS, 2026-08-14.
+        run = session.get(Run, args.run)
+        if run is None or run.hv is None:
+            raise SystemExit(f"ERROR: run {args.run} has no HV on "
+                             "runs.hv — the calibration targets are "
+                             "HV-dependent; seed the run's HV first.")
+        run_hv = int(round(abs(run.hv)))
+        print(f"run {args.run}: HV {run_hv} kV "
+              f"(runs.hv={run.hv:+.2f}, magnitude rounded)")
+
         query = (
             select(RunPixel, TrapFilterOutput)
             .join(TrapFilterOutput,
@@ -140,6 +192,7 @@ def main() -> None:
             query = query.where(RunPixel.pixel_number.in_(args.pixels))
 
         for rp, tfo in session.execute(query).all():
+            detector = "upper" if rp.pixel_number < 1000 else "lower"
             peaks = session.scalars(
                 select(ADCPeak)
                 .join(SpectrumFit,
@@ -150,20 +203,24 @@ def main() -> None:
             if not peaks:
                 continue
 
-            points, pairs, dropped = [], [], []
+            points, pairs, dropped, shifts, families = [], [], [], set(), set()
             for peak in sorted(peaks, key=lambda q: q.centroid_adc):
-                kev_row = choose_kev(peak.isotope_decay_energy,
-                                     rp.source_id)
-                if kev_row is None or peak.centroid_error_adc is None:
+                kev_row, shift = choose_kev(peak.isotope_decay_energy,
+                                            rp.source_id, detector, run_hv)
+                if peak.centroid_error_adc is None:
                     dropped.append(peak.isotope_decay_energy.label)
                     continue
+                shifts.add(shift)
+                if kev_row.version:
+                    families.add(kev_row.version)
                 points.append((peak.centroid_adc, peak.centroid_error_adc,
-                               kev_row.energy_kev, kev_row.energy_error_kev))
+                               kev_row.energy_kev + shift,
+                               kev_row.energy_error_kev))
                 pairs.append((peak, kev_row))
             if dropped:
                 print(f"pixel {rp.pixel_number}: dropped "
-                      f"{', '.join(dropped)} (no keV value or no "
-                      "centroid error)")
+                      f"{', '.join(dropped)} (no centroid error — "
+                      "cannot be weighted)")
             if len(points) < args.min_points:
                 print(f"pixel {rp.pixel_number}: skipped — only "
                       f"{len(points)} usable point(s), fewer than "
@@ -183,7 +240,13 @@ def main() -> None:
                 result = fit_calibration(points, quadratic)
                 results[cal_type] = result
                 store(session, rp, tfo, args.label, cal_type, result,
-                      pairs, not args.no_current, args.min_points)
+                      pairs, not args.no_current, args.min_points,
+                      extra_config={
+                          "detector": detector,
+                          "run_hv_kv": run_hv,
+                          "hv_shift_kev": sorted(shifts),
+                          "kev_family": sorted(families),
+                      })
                 made += 1
                 p = result.params
                 quad = (f" quadratic={p['quadratic'].value:+.3e}"

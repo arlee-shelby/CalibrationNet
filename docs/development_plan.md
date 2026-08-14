@@ -304,30 +304,56 @@ run on the fits the 6.1 campaigns are storing right now.)
       over every fitted run, then review match/NULL rates. Blends
       (Cd/Ce) unsupported by design — Bi-only for now.
 
-**Stage 3 — kev_peaks (the remaining DESIGN work):**
-- [ ] Seed `data/simulated_energies_Jin_simulations.csv` via
-      `scripts/seed_decay_energies.py <path>` (it versions kev_peaks
-      rows and carries the origin strings; verify nothing in it
-      assumes NNDC-only origins). 8 lines x 2 detectors, with errors.
-- [ ] Teach `scripts/calibrate.py` detector-aware target selection:
-      UDET pixels (1-127) pair with `Jin-simulation-UDET-30kV` rows,
-      LDET (1001-1127) with `Jin-simulation-LDET-1kV`. The current
-      policy (source-bound row else newest NNDC) cannot express this:
-      the SAME physical source needs different targets per detector.
-- [ ] Per-run HV shift applied at CALIBRATION time (never edit the
-      CSV). `runs.hv` is populated and coherent: 8622 (Fall 2025)
-      -27.0, 9409/9415/9416 0.0, 9469 +27.03 -> UDET shifts ~+3 keV
-      (Fall 2025, 9469) and +30 keV (HV-off runs) vs the 30 kV
-      simulation; LDET is 1 kV when HV is on, 0 when off (confirm
-      against slow controls). TWO SIGN CHECKS at implementation time:
-      the hv column's sign convention differs between eras (8622 is
-      -27, 9469 is +27), and the shift direction must be validated
-      once against a real fitted line before trusting any formula.
+**Stage 3 — kev_peaks: IMPLEMENTED, SEEDED, AND VALIDATED END-TO-END
+(2026-08-14).** Migration ee04eeb163b2 applied (after the campaigns
+drained — DDL on kev_peaks blocks behind the fitters' open read
+transactions; never migrate mid-campaign). 16 Jin values seeded as
+family "Jin-2026a". Trial: extract -> calibrate on pixels 40/49/53 in
+BOTH 9409 (HV 0, shift +30) and 9469 (HV 27, shift +3) — extraction
+matched every peak (0 unmatched, sub-keV residuals), and the same
+pixel calibrated in both runs gives the SAME gain (p40: 0.32722 vs
+0.32727 keV/ADC, within errors; p53: 0.32462 vs 0.32473) with
+constants ~0. The HV-shift design is confirmed end to end. QA plots
+in fit_plots_test/calibration_trial/ (AS eye pass; note 9469s2 p49
+chi2r 33 and 9409s0 p53 chi2r 11 — one pulling point each, visible
+in the residual panels). Original design notes below for reference:
+- A keV value varies along FOUR axes: line, physical source (or
+  none), detector (or none), simulation HV (or none) — because
+  source-DEPENDENT simulation values are still coming (the DB was
+  built for them; capability stays), plus future detector sets at
+  other HVs (e.g. UDET 27). AS ruling: represent the new axes as
+  REAL COLUMNS (alembic migration), not encoded strings —
+  `kev_peaks.detector` (upper/lower/NULL) and `kev_peaks.hv_kv`
+  (integer, NULL = HV-independent). `origin` stays coarse
+  ("nndc"/"simulation"); `version` names the family ("Jin-2026a").
+- [ ] Migration: the two nullable columns (existing rows untouched).
+- [ ] Seed the Jin CSV: source_id NULL, detector per origin string,
+      hv_kv 30 (UDET) / 1 (LDET), origin "simulation",
+      version "Jin-2026a" (adapt seed_decay_energies.py; its current
+      verbatim-origin copy would overflow the 20-char column).
+- [ ] calibrate.py selection (replaces "source-bound else NNDC"):
+      candidates = simulation rows for the line, never bound to a
+      DIFFERENT source; source+detector match beats detector-only;
+      exact-HV match beats canonical-HV-plus-shift; newest family
+      last. A line with NO simulation value is a LOUD ERROR (AS
+      ruling: cannot happen today — all 8 Bi lines covered on both
+      detectors; provision only if it ever fires). NNDC rows are
+      NEVER mixed into a simulation-frame calibration.
+- [ ] HV shift at calibration time, VALIDATED 2026-08-14 with the
+      9409-vs-9469 same-pixel displacement check (UDET pixels
+      40/49/53: +27.35/+28.23/+27.50 keV for a 27 kV HV difference;
+      13 LDET pixels: ~0 -> LDET independent of main HV):
+      **target(run) = jin_value + (sim_HV - run_HV), in magnitudes**
+      (readback convention: reported +27 means -27 kV — AS), with
+      run_HV = round(|runs.hv|) (readback jitter, not physics: 27.03
+      -> 27). UDET: +30 keV at HV-off runs, +3 at 27 kV. LDET:
+      constant +1 keV until LDET HV is ever powered (long away).
+      Record run_HV and the shift in the calibration config.
 - [ ] The Jin values are NOT final: his simulation used a different
       fit function. When the simulation is refit with the frozen fit
-      function, only the CSV reseeds (new kev_peaks rows — old rows
-      and their calibration_points stay for provenance) and
-      calibrations re-run on unchanged ADC centroids.
+      function, reseed as NEW rows under a new version ("Jin-2026b")
+      — old rows and their calibration_points stay for provenance —
+      and calibrations re-run on unchanged ADC centroids.
 - [ ] NNDC physical energies (data/decay_energies.csv) remain the ONLY
       source for fit predictions. Mixing simulation rows into that
       file silently disables all prediction-based retries (happened
@@ -344,7 +370,44 @@ run on the fits the 6.1 campaigns are storing right now.)
       happened (6.0), so this first full calibration set is produced
       entirely by the vetted pipeline.
 
-### 5.4 Low gain
+### 5.3b Query library for notebook analysis (ongoing workstream,
+### started 2026-08-14 at AS request)
+- `calibrationnet/queries.py` now has a NOTEBOOK layer: functions that
+  open their own session and return pandas DataFrames (or plottable
+  arrays), so a Jupyter notebook is just imports + plots. Live-tested:
+  `runs_overview()` (what's in the DB), `fit_overview(runs)`
+  (acceptance picture incl. winning attempt/window), `gain_map(runs)`
+  (per-pixel gain vs nominal from CE anchors), `spectrum(run, pixel)`
+  + `stored_fit_curve(run, pixel)` (reproduce any fit figure),
+  `source_map(run, segment)`; ready for later stages:
+  `centroid_trend(pixel, line)` (needs adc_peaks),
+  `calibration_map(runs)` + `calibration_points_table(run, pixel)`
+  (need calibrations). THE MODEL: this layer grows ON REQUEST — AS
+  describes the plot/question, the query gets added here; AS does not
+  need to write SQL/ORM.
+
+### 5.4 Low gain (reworked 2026-08-14: identify from results, avoid
+### nothing)
+- [x] **No pixel is avoided anymore (AS ruling)**: pixel 91 removed
+      from `data/excluded_pixels.csv` (now empty — the mechanism
+      stays for genuine hardware cases). NOTE: the running campaigns
+      started with 91 still excluded; refit the runs where 91 holds a
+      source claim (8626/8685/8837 per the historical registry) after
+      GT pulls the change, or catch it on any future full pass.
+      `data/known_low_gain_pixels.csv` stays as historical reference
+      only — low gain is not stationary and nothing enforces it.
+- [x] **`scripts/low_gain_report.py`**: per fitted pixel, gain ratio
+      from the fitted CE 482/976 anchor centroids vs the nominal
+      relation (robust — unlike the stored scout_ratio it cannot be
+      fooled by which window pass won), cross-checked against
+      scout_ratio, and against the calibration linear term once
+      calibrations exist (the eventual official number). First run
+      over the in-flight campaigns: every historical registry pixel
+      confirmed from results (1021 0.27, 1043 0.34, 1017 0.38,
+      1032 0.39, 95/96 0.42-0.44, 1054 0.65 — stable across runs),
+      PLUS a previously unknown one: 9469 s39 p100 at 0.386,
+      successfully fitted. This report is the general-checking answer:
+      run it after any campaign, eyeball the flagged tail.
 - [ ] Pixel 1106 (9409, 0.383x) still fails everything — the low-gain
       validation target. Pixel 96 (9415, 0.431x) works and is the
       reference for what success looks like.

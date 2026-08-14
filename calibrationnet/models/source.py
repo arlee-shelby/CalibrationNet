@@ -159,11 +159,19 @@ class KeVPeak(Base):
     source_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("sources.id"), index=True
     )
+    # Simulation values can also be DETECTOR-dependent (AS design ruling
+    # 2026-08-14: the Jin-2026a set is per detector, source-independent;
+    # source-DEPENDENT sets are still coming and use source_id as ever)
+    # and depend on the HV they were simulated at. NULL = not
+    # detector-/HV-specific (e.g. every NNDC row). hv_kv is the HV
+    # MAGNITUDE in kV (readback convention: reported +27 means -27 kV).
+    detector: Mapped[Optional[str]] = mapped_column(String(10))  # upper|lower
+    hv_kv: Mapped[Optional[int]]
 
     energy_kev: Mapped[float]
     energy_error_kev: Mapped[Optional[float]]
     origin: Mapped[str] = mapped_column(String(20))  # "nndc" | "simulation"
-    version: Mapped[Optional[str]] = mapped_column(String(50))  # e.g. "sim-2026a"
+    version: Mapped[Optional[str]] = mapped_column(String(50))  # e.g. "Jin-2026a"
     notes: Mapped[Optional[str]]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
