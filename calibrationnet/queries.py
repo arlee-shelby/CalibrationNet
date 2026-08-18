@@ -539,6 +539,7 @@ def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
                    RunPixel.pixel_number, Calibration.id,
                    Calibration.linear_term, Calibration.linear_error,
                    Calibration.constant_term, Calibration.constant_error,
+                   Calibration.quadratic_term, Calibration.quadratic_error,
                    Calibration.reduced_chi2,
                    SpectrumFit.pars, SpectrumFit.par_errors)
             .join(Calibration, Calibration.run_pixel_id == RunPixel.id)
@@ -567,7 +568,8 @@ def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
             .group_by(CalibrationPoint.calibration_id)).all())
         rows = []
         for (run, seg, pix, cal_id, gain, gain_err, const, const_err,
-             redchi, pars, par_errors) in s.execute(stmt).all():
+             quad, quad_err, redchi, pars, par_errors) in \
+                s.execute(stmt).all():
             sig = (pars or {}).get("sig4")
             sig_err = (par_errors or {}).get("sig4")
             rows.append({
@@ -577,6 +579,8 @@ def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
                 "gain_error": gain_err,
                 "constant_kev": const,
                 "constant_error": const_err,
+                "quadratic_kev_per_adc2": quad,
+                "quadratic_error": quad_err,
                 "ce976_sigma_adc": sig,
                 "ce976_sigma_error_adc": sig_err,
                 "ce976_sigma_kev": (sig * gain if sig and gain else None),
@@ -624,4 +628,77 @@ def peak_table(run, pixel, segment=0, tf_label="nabpy-standard",
                 "amplitude_error": peak.amplitude_error,
             })
         return pd.DataFrame(rows)
+    return _with_session(_query, session)
+
+
+def fit_parameters(run, pixel, recipe="ce-6peak", segment=0,
+                   tf_label="nabpy-standard", session=None):
+    """One stored spectrum fit, fully unpacked for model plotting:
+
+        res = fit_parameters(9469, 53, segment=33)
+        res["parameters"]        # DataFrame: parameter, value, error
+        res["reduced_chi2"], res["chi2"], res["ndf"], res["success"]
+        res["window"]            # (fit_lo, fit_hi) ADC
+        res["attempt"], res["n_peaks"]
+
+    Every model parameter is a row (amp/cen/sig/n/h per peak, shared
+    beta, background intercept/slope). error is None for parameters
+    the winning attempt held FIXED (e.g. frozen weak-peak tails in a
+    conditioned rescue) — they have no uncertainty by construction.
+    Use with stored_fit_curve() (the evaluated model) or evaluate
+    components yourself from these values."""
+    import pandas as pd
+
+    def _query(s):
+        fit = s.execute(
+            select(SpectrumFit)
+            .join(TrapFilterOutput,
+                  SpectrumFit.trap_filter_output_id == TrapFilterOutput.id)
+            .join(RunPixel, TrapFilterOutput.run_pixel_id == RunPixel.id)
+            .where(RunPixel.run_number == run,
+                   RunPixel.segment_index == segment,
+                   RunPixel.pixel_number == pixel,
+                   TrapFilterOutput.label == tf_label,
+                   SpectrumFit.label == recipe)).scalars().first()
+        if fit is None:
+            raise LookupError(
+                f"no stored {recipe!r} fit for run {run} "
+                f"segment {segment} pixel {pixel} ({tf_label}) — "
+                "fit_overview() lists what exists")
+        errors = fit.par_errors or {}
+        params = pd.DataFrame(
+            [{"parameter": name, "value": value,
+              "error": errors.get(name)}
+             for name, value in sorted(fit.pars.items())])
+        return {
+            "parameters": params,
+            "chi2": fit.chi2, "ndf": fit.ndf,
+            "reduced_chi2": fit.reduced_chi2, "success": fit.success,
+            "window": (fit.fit_range_low, fit.fit_range_high),
+            "attempt": (fit.config or {}).get("attempt"),
+            "n_peaks": fit.n_peaks,
+        }
+    return _with_session(_query, session)
+
+
+def raw_energies(run, pixel, segment=0, tf_label="nabpy-standard",
+                 session=None):
+    """The stored trap filter output's energies for one pixel, as a
+    numpy array — the exact input every fit sees. For notebook
+    fitting experiments (docs/notebook_fitting.md): feed it to
+    fit_functions.get_fit, fitting.fit_seeded, or fitting.run_recipe.
+    Nothing done with it in a notebook touches the database."""
+    def _query(s):
+        tfo = s.execute(
+            select(TrapFilterOutput)
+            .join(RunPixel, TrapFilterOutput.run_pixel_id == RunPixel.id)
+            .where(RunPixel.run_number == run,
+                   RunPixel.segment_index == segment,
+                   RunPixel.pixel_number == pixel,
+                   TrapFilterOutput.label == tf_label)).scalars().first()
+        if tfo is None:
+            raise LookupError(
+                f"no {tf_label!r} trap filter output for run {run} "
+                f"segment {segment} pixel {pixel}")
+        return np.asarray(tfo.energies)
     return _with_session(_query, session)

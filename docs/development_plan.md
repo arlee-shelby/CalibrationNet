@@ -359,6 +359,60 @@ in the residual panels). Original design notes below for reference:
       file silently disables all prediction-based retries (happened
       2026-08-13; the files are now separate — keep them separate).
 
+**SPRINT RECORD (2026-08-14/15, the quick-turnaround phase after the
+campaigns) + LINGERING ISSUES — see the end of this section.**
+- Stages 2-4 EXECUTED AT SCALE via scripts/calibrate.sh (self-
+  submitting SLURM array; extract-then-calibrate per segment).
+  Database now holds: 1378 spectrum fits, 6856 adc_peaks (only 3
+  unmatched — 99.96% match rate), 2074 calibrations (linear +
+  quadratic, label "simulation", targets Jin-2026a + validated HV
+  shifts; plus 12 CE-only comparison variants, label
+  "simulation-ce", unblessed).
+- **LDET HV BUG found and fixed 2026-08-14** (caught by the 8-peak vs
+  CE-only comparison): the main HV was applied to LDET targets, so
+  every HV-on LDET calibration had its offset shifted ~-27 keV. Fix:
+  LDET effective HV = 0 until LDET HV is ever powered (calibrate.py
+  pixel_hv). Everything recalibrated in place; offsets now physical
+  in all four datasets.
+- 8-peak vs CE-only comparison (12 pixels, both eras/detectors):
+  IDENTICAL gains (5th decimal), offsets within 0.02 keV — detector
+  linear 26 keV-1 MeV, Auger extraction + targets validated.
+- Notebook query layer grew: calibration_summary (group tables; N+1
+  perf bug fixed — column selects + one grouped count), peak_table.
+- Findings for the group: gains 0.328-0.330 everywhere; UDET 976
+  width ~1.4 keV both eras; LDET improved 2.95 -> 1.91 keV
+  (2025 -> 2026) but is genuinely WIDER than UDET in 2026 (full-shape
+  FWHM 5.76 vs 3.69 keV — verified 4 ways, contradicts expectation);
+  low-gain census per era (95 stable-low both eras; 96 confirmed 0.42
+  in 2026, unmeasurable in Fall — Cd overhead; 1028 EXONERATED:
+  normal 1.00 in 2026, historic observation likely the Cd-overhead
+  scout artifact; all five Fall LDET low-gain pixels normal in 2026).
+
+**LINGERING ISSUES (to run down now that there is time):**
+1. The deferred FITTING closing review (failure summaries in
+   fit_plots_*/ on GT, acceptance stats, AS eye pass) -> sign-off.
+2. Calibration review at scale: per-line residual distributions
+   (trial hints CE 1060 pulls +2 keV on some pixels — systematic?),
+   the high-chi2 tail (9469s2 p49 chi2r 33, 9409s0 p53 chi2r 11),
+   quadratic-term significance (CE-only test suggests linear
+   suffices), gold-standard 8622 p60 vs docs/example_outputs.md.
+3. Fall 2025 LDET offsets run warm (median +2.0 keV, tail to +5.9)
+   while the other three sets hug 0 — why? (2025 LDET oddball /
+   short-trap scale?)
+4. LDET-vs-UDET 2026 resolution gap (AS: "come back later").
+5. 9416 s1 p1069: STILL no CE fit in the final campaign (spacing
+   check) though AS judged its batch-1 fit good by eye.
+6. 80/73: CE fits healthy in the final campaign; Augers still fail.
+7. Pixel 91 unexcluded but never refit (campaigns ran before the
+   change): refit runs 8626/8685/8837. Pixel 1106 low-gain target
+   still fails everything.
+8. Jin refit with the frozen fit function (external) -> reseed as
+   Jin-2026b -> recalibrate; only then are targets final.
+9. Auger implied-energy residuals up to ~2 keV in extraction —
+   quantify the low-ADC nonlinearity they gauge.
+10. gain_map/low_gain_report should distinguish measured-normal /
+    measured-low / NO-MEASUREMENT (the 96/1028 lesson).
+
 **Stage 4 — calibrations (tooling DONE, waits on stage 3):**
 - [ ] `scripts/calibrate.py` already does weighted LSQ (linear +
       quadratic, scale_covar=False per convention), >= 3 points,
