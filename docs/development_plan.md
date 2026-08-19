@@ -412,6 +412,40 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
    quantify the low-ADC nonlinearity they gauge.
 10. gain_map/low_gain_report should distinguish measured-normal /
     measured-low / NO-MEASUREMENT (the 96/1028 lesson).
+11. **THE 9469 UDET COVERAGE FAILURE — diagnosed 2026-08-15** (47 of
+    76 promised pixels): the planner's UPPER readback->frame trend
+    was corrupted (d(y)/d(horizontal) fit -5.15 hex/inch vs the true
+    -4.33 measured by AS's ground-truth dwells and matched by the
+    lower fit -4.38), mis-pointing every UDET slot by up to ~4 mm.
+    UDET's centered rate is ~900 counts/min (SAME in 2025 and 2026 —
+    LDET ~4300; the sources have always favored LDET ~5x), so
+    30-minute dwells work ONLY when truly centered — 2025 was, 9469
+    wasn't. Root cause of the bad fit: circularity — weak, displaced
+    UDET excess maps biased the located frames that feed the trend.
+    Fixed in scripts/optimal_positions.py as `--shared-trend` (rigid
+    tray = one physical trend, AS ruling: lower slopes for both
+    detectors, upper intercepts refit). FOLLOW-UPS:
+    a. `--shared-trend` MUST be passed on every future plan; all plan
+       files in plans/ that predate 2026-08-15 carry the broken UDET
+       pointing — regenerate before use (corrected stems contain
+       "_sharedtrend"). The recovery plan for the 2026-08-15 data
+       opportunity is recovery_schedule2.csv (16.1 h, 26 positions).
+    b. DECIDE after the recovery run validates the mapping: make
+       shared-trend the DEFAULT (rigid tray is always true; an opt-in
+       correctness flag is a trap), and whether the assignment
+       pipeline's locate_all_frames should share slopes too (there
+       the trend is only the locating prior, so the bias is milder).
+    c. Left-edge distortion zone: AS's 38->40 observation (same slot,
+       DOUBLE the displacement of the other slots for the same stage
+       move) means the field-line mapping is locally nonlinear near
+       the far-left column — a linear trend cannot capture it; plan
+       predictions there carry extra uncertainty. Characterize with
+       test dwells / future scan data; possibly a per-region
+       correction in the planner.
+    d. The 5x UDET/LDET rate asymmetry is a standing fact of the
+       source installations (both eras). Raise source orientation
+       (UDET-facing or double-sided) before the NEXT installation —
+       it sets every calibration plan's duration (~0.75 h/position).
 
 **Stage 4 — calibrations (tooling DONE, waits on stage 3):**
 - [ ] `scripts/calibrate.py` already does weighted LSQ (linear +

@@ -1,0 +1,31 @@
+position,linear,horizontal,dwell_min,risk,udet_targets,ldet_targets,unique_best_for
+1,32.946,0.198,40,safe,75@1.2mm,1054@0.8mm,75 1054
+2,34.146,0.048,40,safe,73@1.3mm 106@1.2mm,,73 106
+3,32.546,0.048,40,safe,62@0.8mm,,62
+4,32.946,-0.102,40,safe,36@0.6mm,,36
+5,33.346,0.048,40,safe,48@1.0mm 52@2.9mm,,48
+6,34.646,0.248,60,"AT RISK (>3mm off-center, marginal counts)",115@0.4mm 119@4.3mm,1011@3.3mm,115 119
+7,33.746,-0.052,40,safe,60@0.7mm,,60
+8,34.596,-0.102,40,safe,114@0.1mm,1014@3.6mm,114
+9,34.546,0.048,10,redundant (UDET targets better elsewhere),114@4.3mm,1011@2.7mm 1014@0.8mm,1014
+10,34.896,-0.152,10,LDET-only (fast),,1026@0.7mm,1026
+11,32.496,-0.202,40,safe,29@0.2mm,,29
+12,31.746,-0.202,40,safe,11@1.2mm,,11
+13,33.396,0.148,40,safe,48@1.9mm 52@1.0mm 90@3.7mm,,52
+14,34.146,-0.202,40,safe,72@1.1mm,,72
+15,33.246,0.348,40,safe,79@0.8mm,,79
+16,33.646,0.148,40,safe,90@1.3mm,,90
+17,31.146,0.148,40,safe,22@0.4mm,,22
+18,34.546,0.198,10,redundant (UDET targets better elsewhere),115@1.9mm,1011@1.0mm 1014@3.2mm,1011
+19,31.396,0.148,40,safe,28@1.1mm,,28
+20,32.846,-0.402,40,safe,39@1.3mm 73@2.4mm,,39
+21,31.796,0.048,40,safe,38@0.7mm 42@4.0mm,,38
+22,34.746,0.048,40,safe,118@1.2mm,1014@3.2mm,118
+23,31.896,0.148,40,safe,38@3.9mm 42@1.4mm,,42
+24,32.446,0.348,40,safe,54@1.2mm,,54
+25,30.946,0.248,60,"AT RISK (>3mm off-center, marginal counts)",14@3.8mm 19@2.9mm,,14 19
+26,33.746,0.448,60,ok,62@4.0mm 91@2.8mm,1033@1.9mm,91 1033
+27,34.596,-0.202,60,"AT RISK (>3mm off-center, marginal counts)",114@2.6mm 117@4.5mm,1036@3.8mm,117 1036
+28,30.946,-0.052,60,"AT RISK (>3mm off-center, marginal counts)",13@4.3mm,,13
+29,31.446,0.248,10,redundant (UDET targets better elsewhere),28@1.9mm,1101@2.5mm,1101
+30,31.746,0.248,60,"AT RISK (>3mm off-center, marginal counts)",9@4.0mm 39@3.2mm,,9
