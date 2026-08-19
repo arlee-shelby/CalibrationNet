@@ -425,16 +425,21 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
     Fixed in scripts/optimal_positions.py as `--shared-trend` (rigid
     tray = one physical trend, AS ruling: lower slopes for both
     detectors, upper intercepts refit). FOLLOW-UPS:
-    a. `--shared-trend` MUST be passed on every future plan; all plan
-       files in plans/ that predate 2026-08-15 carry the broken UDET
-       pointing — regenerate before use (corrected stems contain
-       "_sharedtrend"). The recovery plan for the 2026-08-15 data
-       opportunity is recovery_schedule2.csv (16.1 h, 26 positions).
-    b. DECIDE after the recovery run validates the mapping: make
-       shared-trend the DEFAULT (rigid tray is always true; an opt-in
-       correctness flag is a trap), and whether the assignment
-       pipeline's locate_all_frames should share slopes too (there
-       the trend is only the locating prior, so the bias is milder).
+    a. [RESOLVED 2026-08-15] Shared trend is now the DEFAULT
+       everywhere: `share_trend_slopes()` in
+       calibrationnet/pipeline/source_assignment.py, applied inside
+       locate_all_frames (share_slopes=True default), inherited by
+       the planner; `--independent-trends` is the debug-only escape
+       (stem marker "_indeptrends"). Verified: flagless planner
+       reproduces the corrected trend and plan exactly. Plan files
+       predating 2026-08-15 still carry the broken UDET pointing —
+       AS's locked sequence for the data opportunity stands
+       (recovery_schedule2.csv); regenerate anything else before use.
+    b. [RESOLVED 2026-08-15] Source assignments REGENERATED under the
+       corrected trend and applied as-is (AS: no review — CHECKs skip
+       by design, fixable later): 15784 claims, 1703 CHECK rows
+       skipped; only 95 pixels changed source identity (the rest is
+       ring-edge churn) — diff in plans/assignment_diff_report.csv.
     c. Left-edge distortion zone: AS's 38->40 observation (same slot,
        DOUBLE the displacement of the other slots for the same stage
        move) means the field-line mapping is locally nonlinear near
@@ -473,6 +478,29 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
   (need calibrations). THE MODEL: this layer grows ON REQUEST — AS
   describes the plot/question, the query gets added here; AS does not
   need to write SQL/ORM.
+
+### 5.3c GATE-ONLY FIT SELECTION (AS ruling 2026-08-15 — supersedes
+### assignment-driven selection everywhere)
+- Every pixel passing the statistics gate is FITTED, whatever its
+  assignment: the assigned isotope's recipes when one exists, else
+  Bi-207. Source assignment now influences NOTHING in fitting — it is
+  the prediction/bookkeeping layer it was designed to be. Implemented
+  in scripts/fit_spectra.py; every fit's config records
+  recipe_isotope + assigned_isotope and the log prints
+  "assigned=none/Cd-109/..." so fallback fits stay identifiable.
+- WHY (measured 2026-08-15): the old skip-unassigned rule silently
+  lost real coverage — 25 gate-passing unassigned 9469 dwells never
+  attempted (incl. missing "unreachable" holes 116, 1111, 1119), and
+  10/10 gate-passing Cd-ASSIGNED dwells fit cleanly as mis-claimed Bi
+  light (CE chi2r 1.38-1.91; Augers failed honestly where Cd floods
+  the low window — one genuine Auger pass at Bi-consistent
+  centroids). Pure-foreign spectra never reach the ladder anyway:
+  347/357 Cd dwells stop at the gate. The quality gate + spacing
+  check remain the wrong-source protection (unchanged since batch-1).
+- The recovered 9469 dwells were fitted immediately (2026-08-15);
+  the three campaigns need ONE re-sweep under the new rule (same
+  submit commands; only newly-eligible pixels get attempts), then a
+  calibrate.sh pass, then refresh the missing-pixel census.
 
 ### 5.4 Low gain (reworked 2026-08-14: identify from results, avoid
 ### nothing)

@@ -386,7 +386,8 @@ def check_anchor_installation(session, holder, convention, installation):
 
 def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
                       holders: dict, offsets: dict, fields: dict = None,
-                      installations: dict = None) -> tuple:
+                      installations: dict = None,
+                      share_slopes: bool = True) -> tuple:
     """Two-round frame location for every (segment key, detector).
 
     Round 1 locates each segment from its readback-based anchor prior;
@@ -420,6 +421,9 @@ def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
         by_det = {det: {k: located[(k, det)] for k in conv_keys}
                   for det in ("upper", "lower")}
         trend = fit_position_trend(by_det, key_positions)
+        if share_slopes:
+            # Default ON (AS ruling 2026-08-15): see share_trend_slopes.
+            trend = share_trend_slopes(trend, by_det, key_positions)
         trends[spec] = trend
         for k in conv_keys:
             for det in ("upper", "lower"):
@@ -429,6 +433,38 @@ def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
                     excesses[k][det], det, offsets[spec + (det,)], prior,
                     window=(2.0, 1.5), sigma=1.0)
     return frames, trends
+
+
+def share_trend_slopes(trend: dict, located_by_det: dict,
+                       key_positions: dict) -> dict:
+    """The tray is RIGID: both detectors see the same physical stage
+    motion, so the readback->frame slopes must be shared (AS ruling
+    2026-08-15). The upper detector's own fit is biased — its excess
+    maps are ~5x weaker (the sources favor LDET), and the resulting
+    slope error (fit -5.15 hex/inch vs ground-truth -4.33; lower fit
+    -4.38 agrees) mis-pointed every UDET dwell of run 9469 by up to
+    ~4 mm. Keep the LOWER slopes for both detectors; refit only the
+    upper INTERCEPTS (median residual over the located upper frames
+    with slopes held). Returns the corrected trend; unchanged when
+    either detector's fit is missing."""
+    import numpy as np
+    lower, upper = trend.get("lower"), trend.get("upper")
+    if lower is None or upper is None:
+        return trend
+    points = [(pos, key_positions[k])
+              for k, pos in located_by_det["upper"].items()
+              if pos is not None and None not in key_positions[k]]
+    if not points:
+        return trend
+    new_upper = []
+    for axis in (0, 1):
+        a, b, _c = lower[axis]
+        residuals = [pos[axis] - a * lin - b * hor
+                     for pos, (lin, hor) in points]
+        new_upper.append((a, b, float(np.median(residuals))))
+    corrected = dict(trend)
+    corrected["upper"] = tuple(new_upper)
+    return corrected
 
 
 def fit_position_trend(frames_by_key: dict, key_positions: dict) -> dict:

@@ -308,13 +308,18 @@ def main() -> None:
                              "just don't count as coverage. The isotope "
                              "is appended to the output stem so the "
                              "all-slot plan is never overwritten.")
-    parser.add_argument("--shared-trend", action="store_true",
-                        help="the tray is rigid, so use the LOWER "
-                             "detector's readback->frame slopes for "
-                             "both detectors (the upper fit is biased "
-                             "by its ~5x weaker signals); only the "
-                             "upper intercepts are refit. Appends "
-                             "_sharedtrend to the output stem.")
+    parser.add_argument("--independent-trends", action="store_true",
+                        help="DEBUG ONLY: fit each detector's "
+                             "readback->frame trend independently, the "
+                             "pre-2026-08-15 behavior. The default "
+                             "shares the rigid tray's slopes (lower "
+                             "detector's fit, the trustworthy one) "
+                             "because the independent upper fit is "
+                             "biased by its ~5x weaker signals and "
+                             "mis-pointed run 9469's UDET dwells by up "
+                             "to ~4 mm. Appends _indeptrends to the "
+                             "output stem so such plans are never "
+                             "mistaken for production plans.")
     parser.add_argument("--tag", default=None,
                         help="suffix for every output filename (e.g. "
                              "'137A') so this plan is written alongside "
@@ -458,44 +463,18 @@ def main() -> None:
                               for det in ("upper", "lower")}
         frames, trends = locate_all_frames(
             excesses, key_positions, conventions, holders,
-            offsets_for_locate, fields=fields, installations=installations)
+            offsets_for_locate, fields=fields, installations=installations,
+            share_slopes=not args.independent_trends)
         offsets_by_det, refine_report = refine_slot_offsets(
             excesses, frames, offsets_by_det, spec_keys)
     offsets_for_locate = {spec + (det,): offsets_by_det[det]
                           for det in ("upper", "lower")}
     _frames, trends = locate_all_frames(
         excesses, key_positions, conventions, holders, offsets_for_locate,
-        fields=fields, installations=installations)
+        fields=fields, installations=installations,
+        share_slopes=not args.independent_trends)
     trend = trends[spec]
 
-    if args.shared_trend:
-        # The tray is RIGID: both detectors see the same physical
-        # stage motion, so the readback->frame slopes must be shared
-        # (AS ruling 2026-08-15). The upper detector's own fit is
-        # untrustworthy — its excess maps are ~5x weaker (validated:
-        # 2026-08-15 ground truth gave d(y)/d(horizontal) = -4.33
-        # hex/inch, matching the LOWER fit -4.38; the upper fit said
-        # -5.15, mis-placing UDET slots by up to ~4 mm and starving
-        # the 9469 UDET dwells). Keep the lower slopes for both
-        # detectors; refit only the upper INTERCEPTS robustly (median
-        # over located upper frames with slopes held fixed).
-        import numpy as np
-        lower = trend["lower"]
-        upper_frames = [( _frames[(k, "upper")], key_positions[k])
-                        for k in spec_keys
-                        if _frames.get((k, "upper")) is not None
-                        and None not in key_positions[k]]
-        new_upper = []
-        for axis in (0, 1):
-            a, b, _c = lower[axis]
-            residuals = [frame[axis] - a * lin - b * hor
-                         for frame, (lin, hor) in upper_frames]
-            new_upper.append((a, b, float(np.median(residuals))))
-        trend = dict(trend)
-        trend["upper"] = tuple(new_upper)
-        report(f"  --shared-trend: upper slopes replaced by lower's, "
-               f"upper intercepts refit over {len(upper_frames)} "
-               "located segments")
 
     if rounds:
         report("  slot offsets refined against the scanned segments "
@@ -666,8 +645,8 @@ def main() -> None:
         stem += f"_norings{args.exclude_rings}"
     if args.max_positions is not None:
         stem += f"_max{args.max_positions}"
-    if args.shared_trend:
-        stem += "_sharedtrend"
+    if args.independent_trends:
+        stem += "_indeptrends"
     if args.must_include:
         # Long pixel lists overflow the OS filename limit — abbreviate
         # to a count past 8 pixels (the full list is in the summary).

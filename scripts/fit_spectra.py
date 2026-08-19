@@ -179,18 +179,31 @@ def main() -> None:
                       f"{excluded_pixels[rp.pixel_number]}")
                 record_failure(rp.pixel_number, "", "excluded")
                 continue
-            isotope = args.isotope or (rp.source and rp.source.isotope.name)
+            # GATE-ONLY SELECTION (AS ruling 2026-08-15): the source
+            # assignment influences NOTHING here — enough signal means
+            # the pixel is attempted. Recipe choice: the assigned
+            # isotope's recipes when a recipe exists for it, otherwise
+            # Bi-207 (unassigned pixels AND known non-Bi assignments —
+            # the quality gate + spacing check reject wrong-source
+            # spectra honestly). Validated on 9469: 25 gate-passing
+            # unassigned dwells were silently skipped by the old rule,
+            # and 10/10 gate-passing Cd-ASSIGNED dwells fit cleanly as
+            # mis-claimed Bi light. Pure-foreign spectra never pass
+            # the gate (347/357 Cd dwells stopped there). The assigned
+            # isotope is recorded in the log and every fit's config so
+            # fallback fits stay identifiable.
+            assigned = rp.source and rp.source.isotope.name
+            isotope = args.isotope or assigned
             recipes = RECIPES.get(isotope)
-            if recipes is None:
-                reason = ("no source assigned" if isotope is None
-                          else f"no recipe for {isotope}")
-                print(f"pixel {rp.pixel_number}: skipped ({reason})")
-                skipped += 1
-                continue
+            fallback = recipes is None
+            if fallback:
+                isotope = "Bi-207"
+                recipes = RECIPES[isotope]
 
             data = np.asarray(tfo.energies)
-            print(f"pixel {rp.pixel_number} ({isotope}, "
-                  f"{len(data)} waveforms):")
+            print(f"pixel {rp.pixel_number} ({isotope}"
+                  + (f", assigned={assigned or 'none'}" if fallback else "")
+                  + f", {len(data)} waveforms):")
 
             # C-3 statistics gate (AS rule, 2026-08-05): the CE window
             # is the gatekeeper — its counts and strongest peak height
@@ -337,6 +350,8 @@ def main() -> None:
                         failed += 1
                         continue
 
+                    config["recipe_isotope"] = isotope
+                    config["assigned_isotope"] = assigned
                     fit = SpectrumFit.from_lmfit(
                         result,
                         trap_filter_output=tfo,
