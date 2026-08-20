@@ -51,7 +51,8 @@ from calibrationnet.fitting import (LDET_ONLY_TF_LABELS, LINE_GROUP_OF,
                                     centroid_report, gain_scout,
                                     pixel_relation, plot_failed_spectrum,
                                     run_recipe, update_failure_csv)
-from calibrationnet.models import RunPixel, SpectrumFit, TrapFilterOutput
+from calibrationnet.models import (ADCPeak, CalibrationPoint, RunPixel,
+                                   SpectrumFit, TrapFilterOutput)
 from calibrationnet.queries import line_energies
 from sqlalchemy.exc import IntegrityError
 
@@ -290,6 +291,31 @@ def main() -> None:
             anchor_fit_ok = False   # the CE recipe anchors the rest
             try:
                 for recipe_index, recipe in enumerate(recipes):
+                    # SKIP-FROZEN (AS ruling 2026-08-20): a stored fit
+                    # whose peaks a calibration references is KEPT, not
+                    # re-fitted — the freeze is per RECIPE, not per
+                    # pixel. Before this, the per-pixel transaction
+                    # rolled back a frozen CE replacement TOGETHER with
+                    # a fresh, innocent Auger fit from the same pass
+                    # (the re-sweep silently lost >=14 clean Augers),
+                    # and re-sweeps burned the full ladder on fits that
+                    # could never be stored. A kept CE fit still
+                    # provides the Auger's anchors.
+                    frozen = session.execute(
+                        select(CalibrationPoint.id)
+                        .join(ADCPeak,
+                              CalibrationPoint.adc_peak_id == ADCPeak.id)
+                        .join(SpectrumFit,
+                              ADCPeak.spectrum_fit_id == SpectrumFit.id)
+                        .where(SpectrumFit.trap_filter_output_id == tfo.id,
+                               SpectrumFit.label == recipe["label"])
+                        .limit(1)).first() is not None
+                    if frozen:
+                        print(f"  {recipe['label']}: kept (frozen — its "
+                              "peaks are referenced by a calibration)")
+                        if recipe_index == 0:
+                            anchor_fit_ok = True
+                        continue
                     if recipe_index > 0 and not anchor_fit_ok:
                         print(f"  {recipe['label']}: skipped (the CE fit "
                               "did not succeed — it provides the anchors)")

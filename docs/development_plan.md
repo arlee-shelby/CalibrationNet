@@ -388,21 +388,80 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
   normal 1.00 in 2026, historic observation likely the Cd-overhead
   scout artifact; all five Fall LDET low-gain pixels normal in 2026).
 
-**LINGERING ISSUES (to run down now that there is time):**
-1. The deferred FITTING closing review (failure summaries in
-   fit_plots_*/ on GT, acceptance stats, AS eye pass) -> sign-off.
-2. Calibration review at scale: per-line residual distributions
-   (trial hints CE 1060 pulls +2 keV on some pixels — systematic?),
-   the high-chi2 tail (9469s2 p49 chi2r 33, 9409s0 p53 chi2r 11),
-   quadratic-term significance (CE-only test suggests linear
-   suffices), gold-standard 8622 p60 vs docs/example_outputs.md.
+**LINGERING ISSUES (statuses as of the 2026-08-20 review):**
+1. Fitting closing review: AS reviewed the campaign plots; the
+   remaining statistics pass is optional (lightweight funnels on
+   request). The two specific pixels are resolved/staged (5, 6).
+2. [DONE 2026-08-20] Calibration review at scale, over 1112 current
+   linear calibrations:
+   - Per-line residuals: anchors ~0 by construction; **Auger 56
+     +0.58 keV** and **Auger 68 +0.18** systematically high (the
+     low-ADC nonlinearity, now measured); **CE 1048 -0.14 keV**
+     systematically low (tight IQR); CE 566 noisy (blend), and
+     **CE 1060 EXONERATED** (median +0.03 — the trial's +2 keV was
+     tail, not systematic). These patterns are the expected
+     fit-function-mismatch signature — document as the pre-Jin-2026b
+     baseline; the frozen-function refit is the fix, not tuning.
+   - chi2 tail: median 2.63, q90 9.3, but q99 84 — ~2 dozen
+     calibrations above ~30 need the eye pass (worst: 8627 p1026
+     284, 8629 p1074 283, 9469 p1022 230, 9416 p29 180). QA figures
+     exist for all (calibration_plots on GT + _recovered locally).
+   - Quadratic term significant (>3 sigma) in 13% — consistent with
+     the same low-end curvature. RULING NEEDED: which type
+     downstream consumes (both stay stored/blessed per type).
+   - **CALIBRATION WEIGHTING REMOVED (AS ruling 2026-08-20)**:
+     fit_calibration is now plain UNWEIGHTED least squares (every
+     point equal; point errors stored but unused; parameter errors
+     from residual scatter, scale_covar=True — the one deliberate
+     deviation from the unscaled convention, meaningless without
+     weights). reduced_chi2 now = mean squared residual in keV^2,
+     so sqrt(reduced_chi2) = RMS deviation in keV — the old
+     chi2-tail list (weighted units) is obsolete; regenerate the
+     review list in RMS-keV terms after the full recalibration.
+     Validated: p53/p60 gains shift < 1e-3 keV/ADC vs weighted.
+     REQUIRES one full ./scripts/calibrate.sh pass on GT (also
+     re-blesses the handful of test calibrations stored unblessed
+     during validation).
+   - Gold standard 8622 p60: gain 0.32826 vs historical 0.32809
+     (0.05%), chi2r 0.73 — PASSES.
 3. Fall 2025 LDET offsets run warm (median +2.0 keV, tail to +5.9)
-   while the other three sets hug 0 — why? (2025 LDET oddball /
-   short-trap scale?)
+   — unexplained; correlate with the residual patterns above during
+   the eye pass (2025 LDET oddball / short-trap scale?).
 4. LDET-vs-UDET 2026 resolution gap (AS: "come back later").
-5. 9416 s1 p1069: STILL no CE fit in the final campaign (spacing
-   check) though AS judged its batch-1 fit good by eye.
-6. 80/73: CE fits healthy in the final campaign; Augers still fail.
+4b. Jin-2026b refit: AS defers — post-development, revisit when
+   sub-keV absolute accuracy matters. The per-line residual baseline
+   above is the ready-made before/after test.
+5. [RESOLVED 2026-08-20, AS eye-verified "looks good"] 9416 s1
+   p1069 CE fit ACCEPTED on rerun
+   (chi2r 1.78, conditioned rescue — the old spacing rejection no
+   longer reproduces), stored, extracted, calibrated. Eye-verify its
+   figure during the calibration pass.
+6. [RULED 2026-08-20] 80/73 Augers: accepted loss. The 50%-threshold
+   test (547 candidates, no-store, 9469 + Fall LDET) settled it:
+   raising the Auger centroid bar 25% -> 50% admits ONE marginal fit
+   in the whole dataset — the failure population is bimodal (clean
+   <25% or catastrophic 1000s%), so 25% sits in a natural gap.
+   **AS ruling: 25% stays.** (80's best attempt: 43% = +-23 keV on a
+   56 keV line — not a measurement.)
+7. [FOUND + FIXED 2026-08-20] The same test exposed 14 CLEAN Augers
+   (errors 1-17%) on pixels with no stored Auger fit: the re-sweep's
+   per-pixel transaction rolled back a frozen-CE replacement TOGETHER
+   with the fresh Auger from the same pass — silently discarding it.
+   Fix: SKIP-FROZEN per recipe in fit_spectra.py (a
+   calibration-frozen fit is KEPT, never re-fitted; a kept CE still
+   anchors the Auger). Validated: 8844s0 p1037's Auger now fits at
+   PRODUCTION thresholds (chi2r 1.11, ~4% errors) and stores. Bonus:
+   re-sweeps stop burning the ladder on frozen pixels — they get
+   fast. Recovery of the remaining lost Augers (incl. any in the
+   untested Fall UDET / 9409/9415/9416): one re-sweep + calibrate.sh
+   after the commit.
+8. [DESIGN ITEM, post-development — AS 2026-08-20] The freeze exists
+   so development ends with only fits we trust. But the schema
+   supports MULTIPLE fits per trap filter output (labels/versions),
+   and re-sweeps are now a normal operation: design the long-term
+   policy for what a re-sweep may replace, what stays frozen, and
+   whether replaced fits should be RETAINED as versions instead of
+   deleted. Decide deliberately once development closes.
 7. Pixel 91 unexcluded but never refit (campaigns ran before the
    change): refit runs 8626/8685/8837. Pixel 1106 low-gain target
    still fails everything.
@@ -497,10 +556,24 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
   centroids). Pure-foreign spectra never reach the ladder anyway:
   347/357 Cd dwells stop at the gate. The quality gate + spacing
   check remain the wrong-source protection (unchanged since batch-1).
-- The recovered 9469 dwells were fitted immediately (2026-08-15);
-  the three campaigns need ONE re-sweep under the new rule (same
-  submit commands; only newly-eligible pixels get attempts), then a
-  calibrate.sh pass, then refresh the missing-pixel census.
+- The recovered 9469 dwells were fitted immediately (2026-08-15) and
+  the three campaigns were re-swept on GT.
+- **Extraction had the same disease (fixed 2026-08-20)**: unassigned
+  pixels were fitted but silently skipped by extract_adc_peaks.py
+  ("skipped (no source)") — fits with zero adc_peaks and no
+  calibration. Fix: extraction takes the isotope from the FIT's own
+  config (recipe_isotope, recorded since gate-only fitting), source
+  only as fallback for pre-change fits. After the fix + one
+  calibrate.sh pass: 0 peak-less fits, 7426 adc_peaks, 2248
+  calibrations; 9469 coverage 52 UDET (holes 44->39: recovered
+  10/11/38/79/116) and 81 LDET (holes 16->13: 1101/1111/1119).
+  Freeze refusals in fit_spectra.py now also record their own honest
+  failure stage instead of nothing.
+- LESSON, recorded: the gate-only ruling must hold at EVERY stage
+  that selects work — fitting, extraction (both done); calibration
+  never depended on assignment. When adding a pipeline stage, its
+  selection rule is "does the input exist", never "is a source
+  assigned".
 
 ### 5.4 Low gain (reworked 2026-08-14: identify from results, avoid
 ### nothing)

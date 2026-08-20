@@ -1,42 +1,46 @@
-"""Calibration fit math: weighted keV-vs-ADC polynomial fits and
+"""Calibration fit math: UNWEIGHTED keV-vs-ADC polynomial fits and
 their QA figure. NOTHING here touches the database — shared by
 scripts/calibrate.py (the database pipeline) and scripts/offline/
-(files only). CONVENTION: lmfit with scale_covar=False, like every
-fit in this project (docs/fit_storage.md).
+(files only).
+
+UNWEIGHTED (AS ruling 2026-08-20): every point counts equally — the
+old per-point weighting (sigma from projected centroid error (+)
+target error) made the strong CE anchors dominate and turned sub-keV
+deviations into reduced chi2 of hundreds. Consequences, deliberate:
+- parameter uncertainties come from the RESIDUAL SCATTER (standard
+  unweighted least squares, lmfit scale_covar=True) — a deviation
+  from the project's scale_covar=False convention, which is
+  meaningless without weights;
+- the stored reduced_chi2 is the mean squared residual in keV**2, so
+  sqrt(reduced_chi2) reads directly as the RMS deviation in keV.
 """
 
 from lmfit import Minimizer, Parameters
 
 
 def fit_calibration(points, quadratic: bool):
-    """Weighted polynomial fit of keV vs ADC. points: [(adc, adc_err,
-    kev, kev_err)]. Returns the lmfit MinimizerResult."""
+    """Unweighted polynomial fit of keV vs ADC. points: [(adc,
+    adc_err, kev, kev_err)] — the errors are carried for records and
+    figures but do NOT weight the fit (AS ruling 2026-08-20).
+    Returns the lmfit MinimizerResult."""
     import numpy as np
     adc = np.array([p[0] for p in points])
-    adc_err = np.array([p[1] for p in points])
     kev = np.array([p[2] for p in points])
-    kev_err = np.array([p[3] or 0.0 for p in points])
 
-    gain = (kev.max() - kev.min()) / (adc.max() - adc.min())
-    for _ in range(2):  # refine the error projection once
-        sigma = np.sqrt((gain * adc_err) ** 2 + kev_err ** 2)
-        params = Parameters()
-        params.add("constant", value=0.0)
-        params.add("linear", value=gain)
+    params = Parameters()
+    params.add("constant", value=0.0)
+    params.add("linear",
+               value=(kev.max() - kev.min()) / (adc.max() - adc.min()))
+    if quadratic:
+        params.add("quadratic", value=0.0)
+
+    def residual(p):
+        model = p["constant"] + p["linear"] * adc
         if quadratic:
-            params.add("quadratic", value=0.0)
+            model = model + p["quadratic"] * adc * adc
+        return model - kev
 
-        def residual(p):
-            model = p["constant"] + p["linear"] * adc
-            if quadratic:
-                model = model + p["quadratic"] * adc * adc
-            return (model - kev) / sigma
-
-        # scale_covar=False is the database-wide convention: store raw
-        # weighted uncertainties, never redchi-rescaled (lmfit default).
-        result = Minimizer(residual, params, scale_covar=False).minimize()
-        gain = result.params["linear"].value
-    return result
+    return Minimizer(residual, params, scale_covar=True).minimize()
 
 
 def plot_calibration(points, results, rp, label, out_dir):

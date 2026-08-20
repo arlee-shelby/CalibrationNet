@@ -22,14 +22,15 @@ of the trap setting, so points from different outputs never mix):
 3. Require at least --min-points points (default 3 — two or fewer of
    eight is never enough). Peaks without a centroid error are excluded:
    they cannot be weighted.
-4. Weighted least squares: keV = constant + linear*ADC (+ quadratic*
-   ADC^2) — UNITS: constant in keV, linear in keV/ADC, quadratic in
-   keV/ADC^2 — with sigma_i = sqrt((gain*centroid_err_i)^2 +
-   kev_err_i^2), gain refined once from the first pass. The quadratic
-   fit needs >= 4 points (one degree of freedom). CONVENTION: lmfit
-   with scale_covar=False, like every fit in this database — stored
-   uncertainties are never rescaled by reduced chi2 (lmfit's default
-   WOULD rescale); scaling is always the analyst's later decision.
+4. UNWEIGHTED least squares (AS ruling 2026-08-20): keV = constant
+   + linear*ADC (+ quadratic*ADC^2) — UNITS: constant in keV, linear
+   in keV/ADC, quadratic in keV/ADC^2 — every point counts equally;
+   the point errors are stored but do not weight the fit. Parameter
+   uncertainties come from the residual scatter (scale_covar=True —
+   with no weights the unscaled convention is meaningless), and the
+   stored reduced_chi2 is the mean squared residual in keV^2:
+   sqrt(reduced_chi2) = RMS deviation in keV. The quadratic fit
+   needs >= 4 points (one degree of freedom).
 5. Store one Calibration row per type with coefficients +- errors,
    chi2/ndf/reduced chi2, success, var_names + covariance (correlations
    derive on demand — docs/fit_storage.md), config, and one
@@ -129,8 +130,11 @@ def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
         covariance=(result.covar.tolist()
                     if result.covar is not None else None),
         config={"kev_selection": KEV_POLICY, "min_points": min_points,
-                "weighting": "sigma = gain*centroid_err (+) kev_err, "
-                             "gain refined once",
+                "weighting": "UNWEIGHTED (AS 2026-08-20): plain "
+                             "least squares, parameter errors from "
+                             "residual scatter (scale_covar=True); "
+                             "reduced_chi2 = mean squared residual "
+                             "in keV^2",
                 **(extra_config or {})},
         is_current=make_current,
     )
