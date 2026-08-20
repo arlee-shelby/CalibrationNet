@@ -40,8 +40,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from calibrationnet.db import get_session
-from calibrationnet.models import (ADCPeak, IsotopeDecayEnergy, RunPixel,
-                                   SpectrumFit, TrapFilterOutput)
+from calibrationnet.models import (ADCPeak, Isotope, IsotopeDecayEnergy,
+                                   RunPixel, SpectrumFit, TrapFilterOutput)
 
 LINE_GROUPS = {"ce": "CE", "auger": "Auger"}
 
@@ -156,9 +156,28 @@ def main() -> None:
             ).all()
             if not fits:
                 continue
-            isotope = rp.source and rp.source.isotope
+            # GATE-ONLY SELECTION, extraction side (AS ruling
+            # 2026-08-15/20): the isotope whose lines these fits
+            # target comes from the FIT ITSELF (config recipe_isotope
+            # — recorded by fit_spectra.py since gate-only fitting),
+            # so extraction never depends on the source assignment.
+            # Fits predating that key always had an assigned source,
+            # which remains the fallback. (Before this fix, unassigned
+            # pixels were fitted but silently skipped here — fits with
+            # zero adc_peaks and no calibration, found 2026-08-20.)
+            isotope = None
+            for f in fits:
+                name = (f.config or {}).get("recipe_isotope")
+                if name:
+                    isotope = session.scalars(
+                        select(Isotope).where(Isotope.name == name)
+                    ).first()
+                    break
             if isotope is None:
-                print(f"pixel {rp.pixel_number}: skipped (no source)")
+                isotope = rp.source and rp.source.isotope
+            if isotope is None:
+                print(f"pixel {rp.pixel_number}: skipped (fits record "
+                      "no isotope and no source is assigned)")
                 continue
             groups = {}
             for line in isotope.decay_energies:

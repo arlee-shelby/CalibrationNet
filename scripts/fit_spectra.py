@@ -386,6 +386,12 @@ def main() -> None:
                 print(f"  pixel {rp.pixel_number}: REFUSED — its fits' "
                       "peaks are referenced by a calibration (frozen). "
                       "Delete or rebuild that calibration to refit.")
+                # Its own honest stage (AS, 2026-08-20) — this was
+                # recorded as "excluded", polluting failure review
+                # whenever a re-sweep hits already-calibrated pixels.
+                record_failure(rp.pixel_number, "",
+                               "frozen (calibration references its peaks)")
+                continue
 
     if args.plot is not None:
         update_failure_csv(args.plot / "fit_failures_summary.csv",
