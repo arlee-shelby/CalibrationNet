@@ -455,13 +455,20 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
    fast. Recovery of the remaining lost Augers (incl. any in the
    untested Fall UDET / 9409/9415/9416): one re-sweep + calibrate.sh
    after the commit.
-8. [DESIGN ITEM, post-development — AS 2026-08-20] The freeze exists
-   so development ends with only fits we trust. But the schema
-   supports MULTIPLE fits per trap filter output (labels/versions),
-   and re-sweeps are now a normal operation: design the long-term
-   policy for what a re-sweep may replace, what stays frozen, and
-   whether replaced fits should be RETAINED as versions instead of
-   deleted. Decide deliberately once development closes.
+8. [RESOLVED 2026-08-20 — bookkeeping ruling, done NOW at AS
+   request] NO versioning, NO cross-label "current". A calibration's
+   identity is (trap filter output, type, LABEL); labels are
+   permanent coexisting target families that never interact; which
+   one an analysis uses is an explicit query-time choice. Renamed:
+   "simulation" -> jin2026a (2226 rows), "simulation-ce" ->
+   jin2026a-ce-only (24 rows — the CE-only comparison; deletable on
+   AS's word). calibrate.py: cross-label demotion and --no-current
+   REMOVED (is_current dormant); queries label-explicit (default
+   jin2026a). The LABEL REGISTRY + the DEVELOPMENT RITUAL (export ->
+   delete calibrations = the deliberate unfreeze -> refit ->
+   re-extract -> recalibrate) are written in docs/fit_storage.md —
+   routine operation is purely additive; future target families
+   (jin2026b, nndc) are new labels requiring NO refits.
 7. Pixel 91 unexcluded but never refit (campaigns ran before the
    change): refit runs 8626/8685/8837. Pixel 1106 low-gain target
    still fails everything.

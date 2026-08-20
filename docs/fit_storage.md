@@ -189,3 +189,47 @@ from *several* fits of the same output (CE window + Auger window). Which
 fits contributed is recorded per point, through
 `calibration_points → adc_peak → spectrum_fit`; the assumed keV values
 through `calibration_points → kev_peak`.
+
+## Calibration label registry (bookkeeping ruling, AS 2026-08-20)
+
+A calibration's identity is **(trap filter output, type, label)** —
+the output pins run/segment/pixel/trap setting, `type` is
+linear/quadratic, and the **label names the target family**. Labels
+are permanent, coexisting families: storing one label NEVER touches
+another; re-running the SAME label replaces in place (a correction,
+not a version). There is no cross-label "current" — which label an
+analysis uses is the analyst's explicit choice at query time
+(`calibration_summary(label=...)`; default "jin2026a"). The
+`is_current` column is dormant (always true) and carries no meaning.
+
+| label              | targets & method                              |
+|--------------------|-----------------------------------------------|
+| `jin2026a`         | Jin 2026a simulated detected energies, per detector + per-run HV shift; UNWEIGHTED least squares. THE production family. |
+| `jin2026a-ce-only` | Same targets, CE points only — the 2026-08-19 8-peak-vs-CE-only comparison (12 pixels). Diagnostic; deletable. |
+| (future) `jin2026b`| Jin's frozen-fit-function refit of the simulation. New family, coexists with jin2026a — the before/after test of the target values. |
+| (future) `nndc`    | NNDC physical energies, for comparison only — never the production calibration (wrong frame). |
+
+Every new label gets a row here when it is first stored.
+
+## Changing things later: the development ritual
+
+Routine operation is purely additive (new runs: fit -> extract ->
+calibrate; comparisons: a NEW label). The protections in force:
+the database refuses to delete any fit's peaks that a calibration
+references; the fit driver SKIPS such pixels on re-runs ("kept —
+frozen"); extraction refuses to replace referenced peaks. Nothing
+routine can disturb a calibrated result.
+
+When fits themselves must change (recipe/threshold development —
+target changes do NOT require this, they are just a new label):
+
+1. Decide the scope (runs / segments / pixels / recipes).
+2. Optionally export the affected calibrations to CSV for the record
+   (they will be deleted; the database keeps no versions by ruling).
+3. DELETE the affected calibrations — this is the deliberate
+   unfreeze, and the only destructive step.
+4. Refit the scope (the re-sweep replaces the now-unfrozen fits).
+5. Re-extract (adc_peaks), recalibrate (same labels).
+
+This is exactly the 2026-08 development sequence, formalized. It is
+loud, ordered, and entirely recoverable up to step 3's export.

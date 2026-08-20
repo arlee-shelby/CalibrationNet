@@ -34,9 +34,10 @@ of the trap setting, so points from different outputs never mix):
 5. Store one Calibration row per type with coefficients +- errors,
    chi2/ndf/reduced chi2, success, var_names + covariance (correlations
    derive on demand — docs/fit_storage.md), config, and one
-   CalibrationPoint per (adc_peak, kev_peak). By default the new
-   calibration becomes is_current for its (run_pixel, type), demoting
-   any previous one; --no-current stores it unblessed.
+   CalibrationPoint per (adc_peak, kev_peak). Identity is (trap
+   filter output, type, LABEL); labels are permanent coexisting
+   families (registry: docs/fit_storage.md) — storing one label never
+   touches another; the analyst picks the label at query time.
 
 Re-running REPLACES the calibration with the same (run_pixel, output,
 type, label); use a different --label to keep alternatives side by side.
@@ -96,9 +97,14 @@ def choose_kev(line, source_id, detector, run_hv):
     return best, shift
 
 
-def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
+def store(session, rp, tfo, label, cal_type, result, pairs,
           min_points, extra_config=None):
     """One Calibration row + its points, replacing a same-keyed one."""
+    # Identity = (trap filter output, type, LABEL): re-running the
+    # same label REPLACES in place; different labels NEVER interact
+    # (AS bookkeeping ruling 2026-08-20 — no cross-label "current",
+    # which one to use is the analyst's label choice at query time;
+    # see the label registry in docs/fit_storage.md).
     for old in session.scalars(
             select(Calibration)
             .where(Calibration.run_pixel_id == rp.id,
@@ -106,13 +112,6 @@ def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
                    Calibration.calibration_type == cal_type,
                    Calibration.label == label)):
         session.delete(old)
-    if make_current:
-        for other in session.scalars(
-                select(Calibration)
-                .where(Calibration.run_pixel_id == rp.id,
-                       Calibration.calibration_type == cal_type,
-                       Calibration.is_current)):
-            other.is_current = False
 
     p = result.params
     calibration = Calibration(
@@ -136,7 +135,7 @@ def store(session, rp, tfo, label, cal_type, result, pairs, make_current,
                              "reduced_chi2 = mean squared residual "
                              "in keV^2",
                 **(extra_config or {})},
-        is_current=make_current,
+        is_current=True,   # dormant column: labels never interact
     )
     session.add(calibration)
     for peak, kev_row in pairs:
@@ -153,10 +152,13 @@ def main() -> None:
     parser.add_argument("--segment", type=int, default=0)
     parser.add_argument("--pixels", type=int, nargs="+", default=None)
     parser.add_argument("--tf-label", default="nabpy-standard")
-    parser.add_argument("--label", default="simulation",
-                        help='calibration attempt name (default '
-                             '"simulation" — targets are simulation-'
-                             'frame values with the run-HV shift)')
+    parser.add_argument("--label", default="jin2026a",
+                        help='calibration label = the TARGET FAMILY '
+                             '(registry: docs/fit_storage.md). Default '
+                             '"jin2026a": Jin 2026a simulated targets '
+                             'with the run-HV shift. A new label '
+                             'coexists with every other label forever; '
+                             're-running the SAME label replaces.')
     parser.add_argument("--recipes", nargs="+", default=None,
                         metavar="FIT_LABEL",
                         help="use only peaks from these fits (e.g. "
@@ -167,8 +169,6 @@ def main() -> None:
     parser.add_argument("--min-points", type=int, default=3,
                         help="fewest matched points that still make a "
                              "calibration (default 3)")
-    parser.add_argument("--no-current", action="store_true",
-                        help="store without blessing as is_current")
     parser.add_argument("--plot", type=Path, default=None, metavar="DIR",
                         help="save a QA figure (points, fits, residuals) "
                              "per pixel into this directory")
@@ -265,7 +265,7 @@ def main() -> None:
                 result = fit_calibration(points, quadratic)
                 results[cal_type] = result
                 store(session, rp, tfo, args.label, cal_type, result,
-                      pairs, not args.no_current, args.min_points,
+                      pairs, args.min_points,
                       extra_config={
                           "detector": detector,
                           "run_hv_kv": run_hv,

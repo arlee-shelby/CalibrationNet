@@ -388,7 +388,7 @@ def centroid_trend(pixel, line_label, run_numbers=None,
 
 
 def calibration_map(run_numbers=None, calibration_type="linear",
-                    current_only=True, label=None, session=None):
+                    label="jin2026a", session=None):
     """One row per stored calibration: run, segment, pixel, detector,
     constant +- err (keV), gain +- err (keV/ADC), quadratic when
     present, reduced chi2, n points. Pivot on pixel for detector maps
@@ -414,8 +414,6 @@ def calibration_map(run_numbers=None, calibration_type="linear",
         if calibration_type is not None:
             stmt = stmt.where(
                 Calibration.calibration_type == calibration_type)
-        if current_only:
-            stmt = stmt.where(Calibration.is_current)
         if label is not None:
             stmt = stmt.where(Calibration.label == label)
         point_counts = dict(s.execute(
@@ -507,7 +505,7 @@ def source_map(run, segment=0, session=None):
 
 def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
                         detector=None, calibration_type="linear",
-                        current_only=True, session=None):
+                        label="jin2026a", session=None):
     """The group-meeting table (AS request 2026-08-14): one row per
     stored calibration with everything the standard errorbar plots
     need — gain +- error (keV/ADC), offset/constant +- error (keV),
@@ -556,8 +554,10 @@ def calibration_summary(run_numbers=None, tf_label="nabpy-standard",
             stmt = stmt.where(RunPixel.run_number.in_(run_numbers))
         if tf_label is not None:
             stmt = stmt.where(TrapFilterOutput.label == tf_label)
-        if current_only:
-            stmt = stmt.where(Calibration.is_current)
+        if label is not None:
+            # labels are permanent coexisting families (registry in
+            # docs/fit_storage.md) — always select one explicitly
+            stmt = stmt.where(Calibration.label == label)
         if detector == "upper":
             stmt = stmt.where(RunPixel.pixel_number < 1000)
         elif detector == "lower":
