@@ -45,15 +45,11 @@ class Calibration(CovarianceMixin, Base):
     """
 
     __tablename__ = "calibrations"
-    __table_args__ = (
-        Index(
-            "ix_calibrations_one_current",
-            "run_pixel_id",
-            "calibration_type",
-            unique=True,
-            postgresql_where=text("is_current"),
-        ),
-    )
+    # is_current is DORMANT (bookkeeping ruling, AS 2026-08-20): labels
+    # are permanent coexisting families; identity is (trap filter
+    # output, type, label) and same-label re-runs replace in place.
+    # The old one-current-per-(run_pixel, type) partial index was
+    # dropped by migration 6ed9910381f5.
 
     id: Mapped[int] = mapped_column(primary_key=True)
     run_pixel_id: Mapped[int] = mapped_column(

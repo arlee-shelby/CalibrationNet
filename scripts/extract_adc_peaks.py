@@ -40,8 +40,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from calibrationnet.db import get_session
-from calibrationnet.models import (ADCPeak, Isotope, IsotopeDecayEnergy,
-                                   RunPixel, SpectrumFit, TrapFilterOutput)
+from calibrationnet.models import (ADCPeak, CalibrationPoint, Isotope,
+                                   IsotopeDecayEnergy, RunPixel,
+                                   SpectrumFit, TrapFilterOutput)
 
 LINE_GROUPS = {"ce": "CE", "auger": "Auger"}
 
@@ -90,8 +91,21 @@ def extract_fits(session, fits, groups, implied, tolerance_kev) -> tuple:
                   f"{len(group)} {prefix} lines — blend/partial "
                   "matching not implemented yet)")
             continue
-        # Replace this fit's peaks (refused by the database if a
-        # calibration already uses them — supersede it first).
+        # SKIP-FROZEN per fit (AS ruling 2026-08-20, mirroring the
+        # fit driver): peaks a calibration references are KEPT — the
+        # fit's siblings still extract. Before this, one frozen CE
+        # aborted the whole pixel and newly fitted Augers never got
+        # peaks.
+        frozen = session.execute(
+            select(CalibrationPoint.id)
+            .join(ADCPeak, CalibrationPoint.adc_peak_id == ADCPeak.id)
+            .where(ADCPeak.spectrum_fit_id == fit.id)
+            .limit(1)).first() is not None
+        if frozen:
+            print(f"  {fit.label}: kept (frozen — its peaks are "
+                  "referenced by a calibration)")
+            continue
+        # Replace this fit's peaks.
         for old in session.scalars(
                 select(ADCPeak)
                 .where(ADCPeak.spectrum_fit_id == fit.id)):

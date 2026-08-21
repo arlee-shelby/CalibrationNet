@@ -388,6 +388,43 @@ campaigns) + LINGERING ISSUES — see the end of this section.**
   normal 1.00 in 2026, historic observation likely the Cd-overhead
   scout artifact; all five Fall LDET low-gain pixels normal in 2026).
 
+**2026-08-20 CLOSING STATE (after the bookkeeping ruling + the
+stale-GT-round recovery):** database fully consistent — 1504 fits,
+0 without peaks, 1113 jin2026a linear calibrations (all UNWEIGHTED;
+389 with all 8 points), RMS-keV deviation median 0.40 / q90 0.91 /
+max 2.52, 76 above 1 keV = the final eye-pass list (all 6-point,
+LDET-heavy; includes known low-gain 9469s39 p96). The lost Augers:
+14/15 recovered and calibrated (8628 p1056 fails correctly at the
+25% bar — the only genuine threshold case). TWO STRUCTURAL FIXES
+completed the bookkeeping ruling: the one-current-per-(pixel,type)
+partial index DROPPED (migration 6ed9910381f5 — it enforced the
+retired semantics and broke same-label replaces), and extraction got
+per-FIT skip-frozen (a frozen CE no longer aborts the pixel's other
+fits' peaks). GT stale-checkout
+theory CONFIRMED in effect: the failing pulls preceded the round;
+after AS switched login nodes the pull succeeded and GT HEAD is now
+4c2bdcc = origin/main — GT is CURRENT and safe for future
+submissions.
+
+**CALIBRATION SIGN-OFF — AS, 2026-08-20.** The RMS eye pass is
+deferred to AS's leisure: much of the residual is expected to
+improve when the SOURCE-CORRECTED simulation values arrive (the
+source-dependent kev_peaks family the schema was built for — a new
+label, no refits). The linear-vs-quadratic "calibration of record"
+question is DISSOLVED by ruling: there is no official type — both
+are stored per pixel, and every analyzer chooses (label, type)
+explicitly; the database does not privilege anyone's choice. The 24
+jin2026a-ce-only diagnostics were re-run UNWEIGHTED (2026-08-20) so
+every calibration in the database now uses the same math.
+
+**WITH THIS, THE DATABASE DEVELOPMENT IS COMPLETE.** Remaining items
+are maintenance/physics: the deferred RMS eye pass; Jin's refit and
+the source-corrected values (new labels); the parked physics
+questions (LDET resolution gap, Auger low-ADC nonlinearity, warm
+Fall-LDET offsets); pixel 1106; the 24 diagnostic rows' fate; run
+9470 seeding check; and the left-edge field distortion for future
+position planning.
+
 **LINGERING ISSUES (statuses as of the 2026-08-20 review):**
 1. Fitting closing review: AS reviewed the campaign plots; the
    remaining statistics pass is optional (lightweight funnels on

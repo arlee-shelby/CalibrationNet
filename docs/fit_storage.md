@@ -205,11 +205,15 @@ analysis uses is the analyst's explicit choice at query time
 | label              | targets & method                              |
 |--------------------|-----------------------------------------------|
 | `jin2026a`         | Jin 2026a simulated detected energies, per detector + per-run HV shift; UNWEIGHTED least squares. THE production family. |
-| `jin2026a-ce-only` | Same targets, CE points only — the 2026-08-19 8-peak-vs-CE-only comparison (12 pixels). Diagnostic; deletable. |
+| `jin2026a-ce-only` | Same targets, CE points only — the 2026-08-19 8-peak-vs-CE-only comparison (12 pixels). Re-run UNWEIGHTED 2026-08-20. Diagnostic; deletable. |
 | (future) `jin2026b`| Jin's frozen-fit-function refit of the simulation. New family, coexists with jin2026a — the before/after test of the target values. |
 | (future) `nndc`    | NNDC physical energies, for comparison only — never the production calibration (wrong frame). |
 
 Every new label gets a row here when it is first stored.
+
+**No calibration-of-record (AS ruling 2026-08-20):** the database
+stores BOTH linear and quadratic per pixel and privileges neither —
+every analysis chooses its (label, type) explicitly at query time.
 
 ## Changing things later: the development ritual
 
