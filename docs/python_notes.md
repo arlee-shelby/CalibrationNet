@@ -116,6 +116,39 @@ release, it IS the public-facing table of contents of the schema.
 Maintenance rule: a new model class must be added in BOTH places —
 imported at the top and listed in `__all__`.
 
+## `__table_args__` and CheckConstraint (models/pixel.py, run_pixel.py)
+
+`__table_args__` is another SQLAlchemy-convention dunder (same family
+as `__tablename__`): a tuple of TABLE-LEVEL definitions — things that
+belong to the table as a whole rather than to one column. Per-column
+facts (type, primary key, one-column foreign key, index) ride on
+`mapped_column(...)`; anything spanning multiple columns or the whole
+table (multi-column constraints, composite foreign keys, table
+options) goes in `__table_args__`.
+
+A `CheckConstraint("...sql...", name="ck_...")` is a rule enforced by
+POSTGRES ITSELF, not by Python: the SQL expression is stored in the
+table definition, and the database evaluates it on every INSERT and
+UPDATE from any client — our scripts, a notebook, someone typing raw
+psql. If the expression is false the write is rejected with an error
+naming the constraint. That is the point: Python-side validation only
+protects code paths that remember to validate; a check constraint
+protects the data against every writer forever.
+
+The `name=` matters: it is the constraint's permanent name inside
+Postgres — it appears in violation error messages (so a name like
+`ck_pixels_detector_matches_number` makes the error self-explanatory)
+and it is how a migration refers to the constraint when altering or
+dropping it. `ck_` is the conventional prefix for check constraints.
+
+Two side notes:
+- The SQL is a string, split across source lines using Python's
+  implicit string concatenation: two string literals next to each
+  other (`"abc " "def"`) fuse into one — there is no comma between
+  them, which is exactly what distinguishes this from a tuple.
+- Because these live in the database schema, editing one is a
+  MIGRATION (development), not cleanup — same rule as columns.
+
 ## `if TYPE_CHECKING:` imports (top of every models/ file)
 
 `typing` is a module from Python's standard library (it ships with

@@ -145,6 +145,17 @@ peaks — the skip changes nothing. Options:
 Either way the redevelopment ritual is unaffected (it re-FITS, which
 writes modern configs).
 
+**Linter/formatter decision (after cleanup, before public release).**
+The repo has no linter configured. Decide whether to add one (e.g.
+Ruff for lint, optionally Black for formatting) with a config checked
+into the repo, so line-length/whitespace/import hygiene is enforced
+automatically for outside contributors instead of by hand. If yes:
+pick the line-length limit first (the cleanup has been wrapping at
+~79), run it once over the whole repo as its own commit, and note
+that the two FROZEN fit_functions files must be EXCLUDED from any
+auto-formatting (md5-checked byte-identical). See docs/python_notes.md
+"Linters" for what these tools do.
+
 **`number_subruns` = lastsubrun + 1 (check when cleaning
 calibrationnet/pipeline/slow_controls.py).** The run-ingestion query
 stores `lastsubrun + 1 AS number_subruns` on the premise that
@@ -179,7 +190,7 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/base.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_pixel.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py, calibrationnet/models/trap_filter_output.py | schema |   |
 | `calibrationnet/models/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | schema |   |
 | `calibrationnet/models/covariance.py` | calibrationnet/models/calibration.py, calibrationnet/models/spectrum_fit.py | schema |   |
-| `calibrationnet/models/pixel.py` | calibrationnet/models/run_pixel.py, scripts/optimal_positions.py | schema |   |
+| `calibrationnet/models/pixel.py` | calibrationnet/models/run_pixel.py, scripts/optimal_positions.py | schema | x |
 | `calibrationnet/models/run.py` | calibrationnet/models/run_segment.py | schema | x |
 | `calibrationnet/models/run_pixel.py` | calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py | schema |   |
 | `calibrationnet/models/run_segment.py` | calibrationnet/models/run.py, calibrationnet/models/run_pixel.py | schema | x |

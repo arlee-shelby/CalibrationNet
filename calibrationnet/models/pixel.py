@@ -10,12 +10,20 @@ if TYPE_CHECKING:
 
 
 class Pixel(Base):
-    """A physical pixel on one of the two detectors. Exists once.
+    """A physical pixel on one of the two detectors in the Nab Experiment. Exists once.
 
     Numbering convention: upper-detector pixels are 1-127; lower-detector
-    pixels are the same number + 1000 (1001-1127). Wiring (board channel,
-    preamp, FET) is stored per run on RunPixel, since it occasionally
-    changes between runs."""
+    pixels are the same number + 1000 (1001-1127). Board channel wiring is stored per
+    run on RunPixel, since it can occasionally change on a per run basis.
+
+    Preamp/FET wiring is quasi-static and lives here (seeded from data/pixel_wiring.csv).
+    It is unlikely preamp and FET maps will change, but if they were to, these values can be
+    updated and the old maps survive through the pixel_wiring.csv file git history. The database
+    doesn't store any per-run history of the preamp/FET maps.
+
+    Note, pixel 0 which is in the raw hdf5 files is a catch-all for board channels
+    with no pixel. It is not included in the database.
+    """
 
     __tablename__ = "pixels"
     __table_args__ = (
@@ -31,20 +39,18 @@ class Pixel(Base):
         ),
     )
 
-    # Natural primary key: pixel numbers are unique across both detectors
-    # (1-127 upper, 1001-1127 lower) and never change.
+    # natural primary key: pixel numbers are unique across both detectors
+    # (1-127 upper, 1001-1127 lower) and never change
     pixel_number: Mapped[int] = mapped_column(primary_key=True)
     detector: Mapped[str] = mapped_column(String(10))  # "upper" | "lower"
 
-    # Quasi-static wiring (labels like "G6"/"F2" encode the channel).
-    # Lives here, not on run_pixels, because remapping is rare; if it ever
+    # quasi-static wiring (labels like "G6"/"F2" encode the channel numbers and preamp/FET label).
+    # lives here, not on run_pixels, because remapping is rare; if it ever
     # happens, update these values — per-run history isn't kept.
     preamp: Mapped[Optional[str]] = mapped_column(String(50))
     fet: Mapped[Optional[str]] = mapped_column(String(50))
 
-    run_pixels: Mapped[List["RunPixel"]] = relationship(
-        back_populates="pixel", cascade="all, delete-orphan"
-    )
+    run_pixels: Mapped[List["RunPixel"]] = relationship(back_populates="pixel", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"Pixel(pixel_number={self.pixel_number}, detector={self.detector})"

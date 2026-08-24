@@ -79,14 +79,24 @@ that previously lived nowhere durable.
 
 ---
 
-## calibrationnet/models/pixel.py — noted 2026-08-24 — pending (fix when file is cleaned)
+## calibrationnet/models/pixel.py — 2026-08-24 — done
 
-### Stale docstring: wiring location
+### Stale docstring: wiring location (fixed)
 
-The class docstring says wiring ("board channel, preamp, FET") is
+The class docstring said wiring ("board channel, preamp, FET") is
 stored per run on RunPixel, but the preamp/fet columns live on Pixel
-itself, with a comment explaining they live there because remapping is
-rare (no per-run history kept). Only board_channel is on RunPixel. The
-docstring predates the columns' placement; the inline comment reflects
-reality. Fix the docstring when cleaning this file (docstring edit,
-behavior-neutral — verify against the DB/wiring module if in doubt).
+itself; only board_channel is per-run. Docstring rewritten to match
+reality (and now also records the pixel-0 catch-all exclusion).
+
+### Wiring-history concern: assessed, no action needed
+
+AS raised during cleanup: if the preamp/FET maps ever changed, an
+in-place update would lose which wiring old runs had. Assessment
+(2026-08-24): safe as designed — (1) nothing computes from preamp/fet
+(they are human-facing metadata; processing depends on board_channel,
+which IS per-run on RunPixel); (2) history is not actually lost — any
+remap means editing data/pixel_wiring.csv and re-running seed_pixels,
+and git history preserves every old map; (3) if per-run wiring history
+ever became analytically important, the fix is a migration moving
+preamp/fet to RunPixel (development, deferred until needed). The
+docstring now states the in-place-update + git-history design.
