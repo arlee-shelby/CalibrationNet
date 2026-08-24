@@ -41,13 +41,41 @@ python scripts/ingest_run.py <run>                        # local
 python scripts/process_run.py <run> --skip-ingest --h5-dir <h5 path>
 
 # cluster one-shot: everything after ingest as a single hands-off
-# SLURM job (resubmits itself after the trap array if needed):
+# SLURM job chain (job -> trap array -> job -> fit array -> job):
 ./scripts/process_run.sh <run> <h5 path>
 ```
 
-`process_run.sh` runs the fit stage serially in one task — fine for a
-typical run; for a very large multi-position campaign use the
-parallel path (`submit_fit_spectra.sh` + `calibrate.sh`) instead.
+`process_run.sh` runs the fit stage as a SLURM array (one task per
+segment, all parallel — `--fits-via-array`), resubmitting itself
+behind each array with a dependency, so wall-clock is about the
+slowest single segment regardless of run size. Extraction and
+calibration run serially in the final job (seconds per segment).
+Note fit failures are never stored, so re-running a finished run
+still re-attempts its hard-failure pixels through the full retry
+ladder — a re-run is NOT fast just because everything is frozen.
+
+## Per-detector runs / non-default trap settings
+
+The default processes both detectors at `nabpy-standard`. When one
+detector needs its own trap settings (the Fall 2025 LDET short trap
+is the standing example), give the label AND its settings AND the
+detector — the trap stage filters at those settings, the fit stage
+fits only that detector, and extraction + calibration scope by the
+trap label automatically:
+
+```bash
+./scripts/process_run.sh <run> <h5 path> \
+    --tf-label short-trap-Fall2025 --rt 150 --ft 20 --fall 1250 \
+    --detector ldet
+```
+
+(All three of `--rt/--ft/--fall` matter: the pending-check and the
+trap array both use them, and a label must always mean one set of
+settings — check an existing label's settings with
+`select distinct label, trap_rise, trap_flattop, trap_falltime from
+trap_filter_outputs`.) The same flags work with `process_run.py`
+directly. Run the default pass and a per-detector pass independently
+— calibrations are keyed by trap output, so the two never collide.
 
 ## Defaults and where each knob lives
 

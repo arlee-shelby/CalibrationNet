@@ -119,6 +119,24 @@ def main() -> None:
                              "(bookkeeping only since gate-only "
                              "fitting; run scripts/assign_sources.py "
                              "--runs <run> separately at any time)")
+    parser.add_argument("--detector", choices=("udet", "ldet"),
+                        default=None,
+                        help="fit only this detector (passed to "
+                             "fit_spectra.py) — for per-detector trap "
+                             "labels like the Fall 2025 LDET short "
+                             "trap; extraction/calibration scope by "
+                             "--tf-label automatically")
+    parser.add_argument("--fits-via-array", action="store_true",
+                        help="cluster only: run the fit stage as a "
+                             "SLURM array (one task per segment, all "
+                             "parallel) via submit_fit_spectra.sh and "
+                             "EXIT — re-run with --skip-fits when the "
+                             "array drains. scripts/process_run.sh "
+                             "chains this automatically.")
+    parser.add_argument("--skip-fits", action="store_true",
+                        help="skip the fit stage (a fit array already "
+                             "ran) and go straight to extraction + "
+                             "calibration")
     args = parser.parse_args()
     run_number = args.run_number
     if args.plot is None:
@@ -233,10 +251,38 @@ def main() -> None:
                   "depend on it. Assign later with "
                   f"scripts/assign_sources.py --runs {run_number}.")
 
-    # 4-6. Fit, extract, calibrate — per segment ------------------------
-    for script, extra in (("scripts/fit_spectra.py",
-                           ["--plot", str(args.plot)]),
-                          ("scripts/extract_adc_peaks.py", []),
+    # 4. Fits — inline per segment, or one parallel SLURM array ---------
+    stage("fit_spectra")
+    fit_extra = ["--plot", str(args.plot)]
+    if args.detector:
+        fit_extra += ["--detector", args.detector]
+    if args.skip_fits:
+        print("skipped (--skip-fits: fit array already ran)")
+    elif args.fits_via_array:
+        if not shutil.which("sbatch"):
+            raise SystemExit("--fits-via-array needs sbatch — on the "
+                             "cluster only; drop the flag to fit "
+                             "segments serially here")
+        run_list = Path(f"run_{run_number}.txt")
+        run_list.write_text(f"{run_number}\n")
+        code = subprocess.call(
+            ["./scripts/submit_fit_spectra.sh", str(run_list),
+             str(args.plot), "--tf-label", args.tf_label, *fit_extra[2:]])
+        raise SystemExit(
+            code or "fit array submitted — re-run this script with "
+                    "--skip-fits when it completes.")
+    else:
+        for segment in segments:
+            code = run_script(["scripts/fit_spectra.py",
+                               "--run", str(run_number),
+                               "--segment", str(segment),
+                               "--tf-label", args.tf_label, *fit_extra])
+            if code != 0:
+                raise SystemExit(
+                    f"fit_spectra.py failed on segment {segment}")
+
+    # 5-6. Extract, calibrate — per segment ------------------------------
+    for script, extra in (("scripts/extract_adc_peaks.py", []),
                           ("scripts/calibrate.py",
                            ["--plot", str(args.plot)])):
         stage(Path(script).stem)

@@ -236,20 +236,11 @@ def main() -> None:
                           f"peak height={peak_height:.0f}; gate needs "
                           f">={gate['min_window_counts']} and "
                           f">={gate['min_peak_height']})")
-                    figure = ""
-                    if args.plot is not None:
-                        fig_path = args.plot / (
-                            f"Run{args.run}_seg{args.segment}"
-                            f"_pix{rp.pixel_number}"
-                            f"_{recipes[0]['label']}.png")
-                        plot_failed_spectrum(
-                            data, recipes[0], ratio0, None, fig_path,
-                            note="SKIPPED: insufficient statistics "
-                                 "(data only)")
-                        figure = fig_path.name
+                    # No figure for gate skips (AS 2026-08-24): only
+                    # pixels that enter the retry ladder get plots —
+                    # the CSV row records the gate numbers.
                     record_failure(rp.pixel_number, recipes[0]["label"],
-                                   "statistics gate", gate_numbers,
-                                   figure=figure)
+                                   "statistics gate", gate_numbers)
                     skipped += 1
                     continue
                 a_lo = int(recipes[-1]["bounds"][0] * ratio0) or 5
