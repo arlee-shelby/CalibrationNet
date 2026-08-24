@@ -54,6 +54,12 @@ Note fit failures are never stored, so re-running a finished run
 still re-attempts its hard-failure pixels through the full retry
 ladder — a re-run is NOT fast just because everything is frozen.
 
+Re-runs also only plot what they actually fit (frozen fits are kept,
+not re-fitted). To regenerate the QA figure for every STORED fit of
+a run without refitting: `python scripts/plot_stored_fits.py --run
+<run>` (draws from the database into `fit_plots/run_<run>/`,
+identical to the fit-time figures plus a "stored" tag).
+
 ## Per-detector runs / non-default trap settings
 
 The default processes both detectors at `nabpy-standard`. When one
