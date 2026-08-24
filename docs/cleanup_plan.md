@@ -99,6 +99,32 @@ are cleaning <file>." (AS chooses the file.) The assistant's
 persistent memory carries the project rulings; this file carries the
 cleanup state. Nothing else needs re-explaining.
 
+## Known items to address during cleanup
+
+**`recipe_isotope` backfill (decide when cleaning
+scripts/extract_adc_peaks.py).** The config key `recipe_isotope` was
+added with gate-only fitting (2026-08-18); the bulk Fall 2025
+campaign fits (2026-08-13/14) predate it — 1377 of 1505 stored fits
+lack it. Extraction falls back to the pixel's assigned source; a
+pixel with neither (10 pixels DB-wide, e.g. 8622 p80) prints
+"skipped (fits record no isotope and no source is assigned)".
+Verified benign 2026-08-24: every missing-isotope fit is FROZEN
+(peaks referenced by a jin2026a calibration) and none has zero
+peaks — the skip changes nothing. Options:
+
+1. RECOMMENDED — backfill `recipe_isotope: "Bi-207"` on the 1377 old
+   configs (a fact, not an invention: ce-6peak/auger-2peak ARE the
+   Bi-207 recipes; every pre-gate-only fit used them). One-time
+   UPDATE script; afterwards every fit is self-describing, the
+   source-assignment fallback in extract_adc_peaks.py becomes dead
+   code to delete, and the message can never recur.
+2. Cosmetic only — reorder extraction so the frozen check precedes
+   isotope resolution ("kept (frozen)" instead of the skip); the
+   fallback stays.
+
+Either way the redevelopment ritual is unaffected (it re-FITS, which
+writes modern configs).
+
 ## File inventory — tick when cleaned ([ ] -> [x])
 
 ### calibrationnet/
