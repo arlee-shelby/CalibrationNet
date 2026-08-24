@@ -14,11 +14,21 @@ be re-run safely at any point and it continues where things stand:
    scripts/submit_trap_filter.sh and THIS SCRIPT EXITS — re-run it when
    the array completes (scripts/pending_segments.py --summary tells
    you). Off the cluster it exits with instructions.
-3. **Source assignment**: skipped when the run's pixels already carry
-   sources; otherwise runs scripts/assign_sources.py and applies the
-   non-CHECK rows (CHECK pixels stay unassigned — their fits are simply
-   skipped downstream; review them by hand later).
-4. **fit_spectra / extract_adc_peaks / calibrate** per segment.
+3. **Source assignment** (PER RUN, bookkeeping only — since the
+   gate-only ruling it does not influence which pixels get fitted):
+   skipped when the run's pixels already carry sources or with
+   --skip-assignment; otherwise runs scripts/assign_sources.py
+   --runs <run> and applies the non-CHECK rows scoped to this run.
+   The review CSV lands in assignments/review_run_<run>.csv
+   (git-tracked review record; the DATABASE is the master).
+4. **fit_spectra / extract_adc_peaks / calibrate** per segment. QA
+   figures go to fit_plots/run_<run>/ (git-ignored, per run).
+
+Knobs: trap settings + label are flags below; fit windows/gates live
+in calibrationnet/fit_recipes.py; extraction tolerance is
+extract_adc_peaks.py --tolerance-kev; the calibration target family
+is calibrate.py --label (default jin2026a — registry in
+docs/fit_storage.md). Full walkthrough: docs/pipeline_usage.md.
 
     ./scripts/with_sc_tunnel.sh python scripts/process_run.py 9402 \\
         --h5-dir /storage/ideas/is-ajezghani3-0/TempCal/
@@ -101,9 +111,18 @@ def main() -> None:
                         metavar="MINUTES",
                         help="passed to ingest_run.py for short-dwell runs")
     parser.add_argument("--plot", type=Path, default=None, metavar="DIR",
-                        help="save fit + calibration QA figures here")
+                        help="QA figure directory (default: "
+                             "fit_plots/run_<run>/ — git-ignored, "
+                             "per run so no folder grows unbounded)")
+    parser.add_argument("--skip-assignment", action="store_true",
+                        help="skip the source-assignment stage "
+                             "(bookkeeping only since gate-only "
+                             "fitting; run scripts/assign_sources.py "
+                             "--runs <run> separately at any time)")
     args = parser.parse_args()
     run_number = args.run_number
+    if args.plot is None:
+        args.plot = Path("fit_plots") / f"run_{run_number}"
 
     # 1. Ingest ---------------------------------------------------------
     stage(f"ingest run {run_number}")
@@ -191,25 +210,35 @@ def main() -> None:
         assigned = session.scalars(
             select(RunPixel).where(RunPixel.run_number == run_number,
                                    RunPixel.source_id.is_not(None))).all()
-    if assigned and not unassigned:
+    if args.skip_assignment:
+        print("skipped (--skip-assignment); run scripts/assign_sources.py "
+              f"--runs {run_number} separately at any time")
+    elif assigned and not unassigned:
         print(f"already assigned ({len(assigned)} run pixels)")
     else:
-        # Writes the review CSV, then applies its non-CHECK rows; CHECK
-        # pixels stay unassigned (their fits are skipped downstream) and
-        # can be reviewed by hand later.
-        if run_script(["scripts/assign_sources.py",
-                       "--label", args.tf_label]) != 0:
-            raise SystemExit("source assignment failed")
-        if run_script(["scripts/assign_sources.py", "--apply",
-                       "--label", args.tf_label]) != 0:
-            raise SystemExit("source assignment apply failed")
+        # Per-run: writes assignments/review_run_<run>.csv, applies its
+        # non-CHECK rows scoped to THIS run. Bookkeeping only — fitting
+        # is gate-only and proceeds regardless — so a failure here
+        # (e.g. a new installation without an eye-verified anchor)
+        # WARNS and continues instead of blocking the pipeline.
+        ok = (run_script(["scripts/assign_sources.py",
+                          "--runs", str(run_number),
+                          "--label", args.tf_label]) == 0
+              and run_script(["scripts/assign_sources.py", "--apply",
+                              "--runs", str(run_number),
+                              "--label", args.tf_label]) == 0)
+        if not ok:
+            print("WARNING: source assignment failed (new installation "
+                  "without an anchor?) — continuing; fitting does not "
+                  "depend on it. Assign later with "
+                  f"scripts/assign_sources.py --runs {run_number}.")
 
     # 4-6. Fit, extract, calibrate — per segment ------------------------
     for script, extra in (("scripts/fit_spectra.py",
-                           ["--plot", str(args.plot)] if args.plot else []),
+                           ["--plot", str(args.plot)]),
                           ("scripts/extract_adc_peaks.py", []),
                           ("scripts/calibrate.py",
-                           ["--plot", str(args.plot)] if args.plot else [])):
+                           ["--plot", str(args.plot)])):
         stage(Path(script).stem)
         for segment in segments:
             code = run_script([script, "--run", str(run_number),

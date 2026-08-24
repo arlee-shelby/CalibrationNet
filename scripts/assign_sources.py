@@ -52,6 +52,19 @@ from calibrationnet.pipeline.source_assignment import (
 )
 
 REVIEW_CSV = "source_assignment_review.csv"
+
+
+def default_csv_path(runs):
+    """Per-run review CSVs live in assignments/ (git-tracked: review
+    flags are human provenance — docs/pipeline_usage.md). The DATABASE
+    is the master record of applied claims; these files are the review
+    trail, never merged into one another."""
+    if not runs:
+        return REVIEW_CSV
+    import os
+    os.makedirs("assignments", exist_ok=True)
+    tag = "+".join(str(r) for r in sorted(set(runs)))
+    return f"assignments/review_run_{tag}.csv"
 FLAG_DIST = 0.95      # verification moved almost a full radius -> check
 MIN_EXCESS = 2.0      # peak must be at least 2x its own baseline
 
@@ -63,10 +76,11 @@ def has_manual_edits(path: str) -> bool:
                for r in csv.DictReader(open(path)))
 
 
-def generate_review(label: str, force: bool) -> None:
-    if not force and has_manual_edits(REVIEW_CSV):
+def generate_review(label: str, force: bool, runs=None,
+                    path: str = REVIEW_CSV) -> None:
+    if not force and has_manual_edits(path):
         raise SystemExit(
-            f"{REVIEW_CSV} contains manual edits (OK/REDO flags). "
+            f"{path} contains manual edits (OK/REDO flags). "
             "Apply them first (--apply) or pass --force to discard."
         )
 
@@ -92,10 +106,10 @@ def generate_review(label: str, force: bool) -> None:
                 session, segments[k])
         # Field configuration per segment: pools must never mix magnet/
         # ExB epochs (the readback->frame mapping depends on them).
-        runs = {r.run_number: r for r in session.scalars(
+        run_rows = {r.run_number: r for r in session.scalars(
             select(Run).where(Run.run_number.in_(
                 {k[0] for k in counts})))}
-        fields = {k: field_key(runs[k[0]]) for k in counts}
+        fields = {k: field_key(run_rows[k[0]]) for k in counts}
         # Every pool's anchor must come from the pool's own installation
         # (a re-mounted tray can sit differently) — checked up front so
         # a missing re-anchor fails loudly before any placement runs.
@@ -157,7 +171,11 @@ def generate_review(label: str, force: bool) -> None:
 
     review_rows = []
     flagged = 0
-    for k in keys:
+    # --runs scopes the OUTPUT only: baselines, frames, and trends
+    # above always use all pooled data, so per-run placements are
+    # identical to the global mode's.
+    write_keys = [k for k in keys if runs is None or k[0] in set(runs)]
+    for k in write_keys:
         run_number, segment_index = k
         for det in ("upper", "lower"):
             labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
@@ -195,12 +213,16 @@ def generate_review(label: str, force: bool) -> None:
                     "flag": "CHECK" if flag else "",
                 })
 
-    with open(REVIEW_CSV, "w", newline="") as f:
+    if not review_rows:
+        raise SystemExit(f"no placements to write for runs {runs} — are "
+                         "those runs ingested with filter outputs at "
+                         f"label {label!r}?")
+    with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(review_rows[0]))
         writer.writeheader()
         writer.writerows(review_rows)
-    print(f"{len(review_rows)} slot placements over {len(keys)} segments "
-          f"-> {REVIEW_CSV}; {flagged} flagged CHECK")
+    print(f"{len(review_rows)} slot placements over {len(write_keys)} "
+          f"segments -> {path}; {flagged} flagged CHECK")
 
 
 def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
@@ -266,10 +288,15 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                 assignments[(run_number, segment_index,
                              p + offset)] = best[0]
 
+    # Scope the apply to the runs the CSV actually covers: a per-run
+    # CSV must never NULL other runs' claims (AS design 2026-08-24).
+    csv_runs = {int(r["run"]) for r in rows}
     with get_session() as session:
         source_ids = {s.label: s.id for s in session.scalars(select(Source))}
         updated = 0
         for (run_number, segment_index) in sorted(counts):
+            if run_number not in csv_runs:
+                continue
             rps = session.scalars(
                 select(RunPixel).where(
                     RunPixel.run_number == run_number,
@@ -292,12 +319,27 @@ def main() -> None:
     parser.add_argument("--force", action="store_true",
                         help="overwrite a review CSV that has manual edits")
     parser.add_argument("--label", default="nabpy-standard")
+    parser.add_argument("--runs", type=int, nargs="+", default=None,
+                        help="write (and apply) placements for these "
+                             "runs ONLY, to a per-run CSV in "
+                             "assignments/ (git-tracked review "
+                             "records). Baselines/frames/trends are "
+                             "still computed from ALL data — identical "
+                             "placements to a global run, scoped "
+                             "output. Applying a per-run CSV touches "
+                             "ONLY its runs' claims. Without --runs: "
+                             "the historical global mode "
+                             "(source_assignment_review.csv).")
+    parser.add_argument("--path", default=None,
+                        help="review CSV path (default: per --runs "
+                             "convention, else the global CSV)")
     args = parser.parse_args()
 
+    path = args.path or default_csv_path(args.runs)
     if args.apply:
-        apply_from_csv(args.label)
+        apply_from_csv(args.label, path)
     else:
-        generate_review(args.label, args.force)
+        generate_review(args.label, args.force, runs=args.runs, path=path)
 
 
 if __name__ == "__main__":

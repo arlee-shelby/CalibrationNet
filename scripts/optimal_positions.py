@@ -320,6 +320,15 @@ def main() -> None:
                              "to ~4 mm. Appends _indeptrends to the "
                              "output stem so such plans are never "
                              "mistaken for production plans.")
+    parser.add_argument("--slots", nargs="+", default=None,
+                        metavar="SLOT",
+                        help="count coverage from THESE slots only "
+                             "(e.g. R1C2 R1C3 R2C2 R2C3) — for a "
+                             "source swap where the trend pool's "
+                             "installation record no longer matches "
+                             "what the slots hold (all slots still "
+                             "locate the frames). Overrides --isotope. "
+                             "Appends _slots... to the output stem.")
     parser.add_argument("--tag", default=None,
                         help="suffix for every output filename (e.g. "
                              "'137A') so this plan is written alongside "
@@ -496,7 +505,20 @@ def main() -> None:
     # location, trend, offset refinement — already used every slot,
     # which is deliberate: more slots pin the frame better; the filter
     # narrows only what the plan tries to put over the pixels.
-    if args.isotope:
+    if args.slots:
+        wanted = set(args.slots)
+        known = set(offsets_by_det["upper"]) | set(offsets_by_det["lower"])
+        unknown = wanted - known
+        if unknown:
+            raise SystemExit(f"--slots {sorted(unknown)} not in this "
+                             f"holder's slots {sorted(known)}")
+        offsets_by_det = {det: {slot: off
+                                for slot, off in offsets_by_det[det].items()
+                                if slot in wanted}
+                          for det in ("upper", "lower")}
+        report(f"  coverage from slots {sorted(wanted)} only "
+               "(--slots override)")
+    elif args.isotope:
         slot_map = slot_maps[spec_keys[0]]
         wanted = {slot for slot, (_sid, label) in slot_map.items()
                   if label.startswith(args.isotope)}
@@ -631,6 +653,8 @@ def main() -> None:
         stem += "_runs" + "+".join(str(r) for r in sorted(set(args.runs)))
     if args.isotope:
         stem += f"_{args.isotope}"
+    if args.slots:
+        stem += "_slots" + "+".join(sorted(set(args.slots)))
     if args.label != "nabpy-standard":
         stem += f"_{args.label}"
     if args.tolerance_mm != 2.6:

@@ -8,19 +8,37 @@ Development is COMPLETE and signed off (docs/development_plan.md,
 "2026-08-20 CLOSING STATE") — every edit in this phase must be
 BEHAVIOR-NEUTRAL unless explicitly decided otherwise.
 
+**"Behavior-neutral" means:** the program does exactly the same
+thing after the edit — same results, same files, same database rows,
+byte-identical outputs. Comments, docstrings, blank lines, and
+variable RENAMES (applied consistently everywhere) are neutral;
+anything that changes a value, a condition, an argument default, an
+order of operations, or an output format is NOT — that is a behavior
+change and follows the escape hatch below.
+
 ## The per-file loop
 
-1. Pick the next unreviewed file below; read it together — the
-   assistant explains anything unclear BEFORE edits start.
-2. Check its "imported/used by" column: those are the files an edit
-   here can break. Renaming any function/argument means touching all
-   of them in the same sitting.
+1. **AS picks the file** — any order is fine; the loop is
+   self-contained per file. The one caution: files that form a tight
+   cluster (a rename in one ripples into its importers) are best
+   done in the same sitting — the dependency column shows the
+   cluster.
+2. Check its "imported/used by" column — BUT treat the table as an
+   index, not the truth: before certifying any rename or signature
+   change, the assistant re-greps the LIVE imports/usages of the
+   touched names across the repo (the table can go stale as cleanup
+   progresses). Regenerate the whole table any time by asking the
+   session — it is derived purely from the import statements.
 3. AS edits (on the `cleanup` branch, never `main`).
 4. Verify, scaled to the risk class:
    - all classes: `git diff` reviewed together — the assistant reads
      the diff and confirms it is behavior-neutral (comments, names,
      formatting) or flags exactly what changed semantically;
-     `python -m py_compile <file>`.
+     `python -m py_compile <file>`. The diff review ALSO checks for
+     KNOWLEDGE LOSS: any deleted comment carrying non-obvious
+     understanding (a why, a constraint, a lesson) must be relocated
+     to its durable home (see "Where the lore lives"), never just
+     dropped.
    - **engine** (calibrationnet/*.py): additionally
      `python scripts/benchmark_fits.py --check-only`, and for
      fitting.py/fit_recipes.py also `--reference-pixels`
@@ -48,10 +66,36 @@ BEHAVIOR-NEUTRAL unless explicitly decided otherwise.
   decision in development_plan.md, then do it with the full engine
   verification — that is development, not cleanup.
 
+## Where the lore lives (the development nuance is NOT only in
+## old chat sessions — each arc has a durable home)
+
+- The complete development timeline, every ruling with its evidence,
+  every found-and-fixed issue, ops lessons, closing state:
+  **docs/development_plan.md** (append-only; anything worth keeping
+  from deleted comments moves HERE).
+- The retry ladder — passes, rungs, gates, quality check, why:
+  **docs/fit_retry_ladder.md**.
+- Storage semantics, label registry, freeze protections, the
+  redevelopment ritual: **docs/fit_storage.md**.
+- Position planning method (+ the shared-trend saga: plan item 11):
+  **docs/position_planning.md** and development_plan.md.
+- Source assignment design (joint method, pools, anchors, claims):
+  the module docstrings in calibrationnet/pipeline/
+  source_assignment.py + scripts/assign_sources.py, and the
+  assistant's persistent memory.
+- Notebook analysis how-to: **docs/notebook_fitting.md**.
+- Original architecture: **docs/pipeline_roadmap.md**.
+
+If during cleanup something important seems to live NOWHERE durable,
+that is a gap: stop and write it into the right document above
+before deleting anything. And the long development session itself
+remains consultable — it can be resumed to ask "why did we do X",
+even after cleanup sessions have started.
+
 ## Session handoff
 
-Start each cleanup session with: "Read docs/cleanup_plan.md and
-continue the cleanup from the first unchecked file." The assistant's
+Start each cleanup session with: "Read docs/cleanup_plan.md; we
+are cleaning <file>." (AS chooses the file.) The assistant's
 persistent memory carries the project rulings; this file carries the
 cleanup state. Nothing else needs re-explaining.
 
