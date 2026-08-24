@@ -35,7 +35,10 @@ HORIZONTAL_CHANNEL = "BL13:Nab:RSIS:downUpstreamMPOS:MPOS"
 # longer appear in the Nab_SlowControl instrument tables). Values are
 # stored in the PHYSICAL sign convention: detector biases and HV are
 # negative (e.g. -300 V, -27 kV). The old +300/+27 recording was a sign
-# mistake and was corrected across the runs table on 2026-07-30. Archive
+# mistake and was corrected across the runs table on 2026-07-30. The HV
+# archive readback is positive for a physically negative HV, hence the
+# negation in its transform (the bias channels report negative natively;
+# fixed 2026-08-24 after runs 9464-9521 briefly stored +27). Archive
 # voltages are in volts (AS); hv is stored in kV, temperatures in Kelvin.
 #
 # Entries: column -> (channel, expected archive unit, transform, aggregate).
@@ -56,7 +59,7 @@ SETTINGS_CHANNELS = {
     "ldet_leakage": ("BL13:Nab:LDETBias:Data", "A",
                      lambda v: v * 1e6, "max"),
     "udet_bias": ("BL13:Nab:UDETBias:SourceVoltage", "V", lambda v: v, "avg"),
-    "hv": ("BL13:Nab:UDETHV:voltage", "V", lambda v: v / 1000.0, "avg"),
+    "hv": ("BL13:Nab:UDETHV:voltage", "V", lambda v: -v / 1000.0, "avg"),
     "udet_armor": ("BL13:Nab:UDETTemperatures:Armor", "K", lambda v: v, "avg"),
     "udet_ring": ("BL13:Nab:UDETTemperatures:Ring1", "K", lambda v: v, "avg"),
     "udet_leakage": ("BL13:Nab:UDETBias:Data", "A",

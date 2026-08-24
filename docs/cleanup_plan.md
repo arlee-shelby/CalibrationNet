@@ -63,7 +63,9 @@ change and follows the escape hatch below.
   docs/development_plan.md if worth keeping, else delete. Docstrings
   stay complete — they are the public documentation.
 - If an edit turns out to need behavior change: STOP, record it as a
-  decision in development_plan.md, then do it with the full engine
+  decision in **docs/cleanup_findings.md** (per-file log of everything
+  the cleanup turns up — AS ruling 2026-08-24: development_plan.md is
+  closed and stays closed), then do it with the full engine
   verification — that is development, not cleanup.
 
 ## Where the lore lives (the development nuance is NOT only in
@@ -71,8 +73,12 @@ change and follows the escape hatch below.
 
 - The complete development timeline, every ruling with its evidence,
   every found-and-fixed issue, ops lessons, closing state:
-  **docs/development_plan.md** (append-only; anything worth keeping
-  from deleted comments moves HERE).
+  **docs/development_plan.md** (closed as of 2026-08-20; anything
+  worth keeping from deleted comments moves to the matching topic doc
+  below, or to cleanup_findings.md if it belongs nowhere else).
+- Everything FOUND during cleanup — latent bugs, stale docs,
+  escape-hatch decisions with their evidence and verification —
+  per file: **docs/cleanup_findings.md**.
 - The retry ladder — passes, rungs, gates, quality check, why:
   **docs/fit_retry_ladder.md**.
 - Storage semantics, label registry, freeze protections, the
@@ -124,6 +130,13 @@ peaks — the skip changes nothing. Options:
 
 Either way the redevelopment ritual is unaffected (it re-FITS, which
 writes modern configs).
+
+**`number_subruns` = lastsubrun + 1 (check when cleaning
+calibrationnet/pipeline/slow_controls.py).** The run-ingestion query
+stores `lastsubrun + 1 AS number_subruns` on the premise that
+lastsubrun is 0-indexed. Verify the premise when cleaning that file —
+e.g. count the actual Run<r>_<subrun>.h5 files for a couple of runs
+and confirm the count equals the stored number_subruns.
 
 ## File inventory — tick when cleaned ([ ] -> [x])
 

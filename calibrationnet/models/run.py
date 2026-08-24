@@ -6,41 +6,40 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
+# Never executed at runtime — lets type checkers resolve the quoted class names below
+# without circular imports.
 if TYPE_CHECKING:
     from .run_pixel import RunPixel
     from .run_segment import RunSegment
 
 
 class Run(Base):
-    """A data-taking run: one continuous acquisition with its detector and
-    beamline settings. Pixels participate in a run through RunPixel."""
+    """A Nab calibration run: one continuous acquisition with its detector and
+    general settings. Pixels participate in a run through RunPixel."""
 
     __tablename__ = "runs"
 
-    # Natural primary key: users query by run number, and run numbers are
-    # never reused, so there is no surrogate id.
+    # Natural primary key: users query by run number, and run numbers are never reused
     run_number: Mapped[int] = mapped_column(primary_key=True)
 
-    # Units and sign conventions (physical signs as of 2026-07-30):
-    # biases in volts (negative, e.g. -300); hv in kilovolts (negative,
-    # e.g. -27); main/udet magnet currents in amps; exb in volts;
-    # temperatures in kelvin; leakage currents in MICROAMPS (both
-    # detectors, both epochs).
+    # Units and sign conventions:
+    # biases in volts (generally negative, e.g. -300); hv in kilovolts (generally negative,
+    # e.g. -27); main/udet magnet currents in amps; exb in volts; temperatures in kelvin; leakage currents in micro amps
     udet_bias: Mapped[Optional[float]]
     ldet_bias: Mapped[Optional[float]]
     hv: Mapped[Optional[float]]
     main: Mapped[Optional[float]]
     udet: Mapped[Optional[float]]
 
-    # timestamptz: slow controls reports tz-aware times (US/Eastern).
+    # timestamptz: slow controls reports time-zone-aware times (US/Eastern).
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    number_subruns: Mapped[Optional[int]]  # lastsubrun in slow controls
 
-    # Source-frame position is NOT here: a long rastering run holds many
-    # positions, so positions live on run_segments (one per dwell).
+    # lastsubrun in slow controls plus 1 (subrun number starts with 0)
+    # the +1 increment is embedded during run ingestion, in slow_controls.py
+    number_subruns: Mapped[Optional[int]]
+
     exb: Mapped[Optional[float]]
-
     udet_armor: Mapped[Optional[float]]
     ldet_armor: Mapped[Optional[float]]
     udet_ring: Mapped[Optional[float]]
@@ -48,12 +47,16 @@ class Run(Base):
     udet_leakage: Mapped[Optional[float]]
     ldet_leakage: Mapped[Optional[float]]
 
+    # a run segment is defined as a part of a calibration run where the source position was unchanged
+    # i.e. in some 2026 runs, with the new automation, continuous runs have multiple positions within it
     segments: Mapped[List["RunSegment"]] = relationship(
         back_populates="run", cascade="all, delete-orphan",
         order_by="RunSegment.segment_index",
     )
-    # Convenience read-only view of every run_pixel across the run's
-    # segments (a pixel appears once per segment).
+
+    # Convenience read-only join of every run_pixel across the run's segments
+    # (a pixel appears once per segment). Skips join through run_segments
+    # when requesting pixel information about a run
     run_pixels: Mapped[List["RunPixel"]] = relationship(
         primaryjoin="Run.run_number == foreign(RunPixel.run_number)",
         viewonly=True,
