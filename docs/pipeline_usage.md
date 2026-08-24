@@ -39,7 +39,15 @@ python scripts/process_run.py <run> --h5-dir <h5 path>   # continues
 # split: ingest locally (both tunnels up), the rest on the cluster:
 python scripts/ingest_run.py <run>                        # local
 python scripts/process_run.py <run> --skip-ingest --h5-dir <h5 path>
+
+# cluster one-shot: everything after ingest as a single hands-off
+# SLURM job (resubmits itself after the trap array if needed):
+./scripts/process_run.sh <run> <h5 path>
 ```
+
+`process_run.sh` runs the fit stage serially in one task — fine for a
+typical run; for a very large multi-position campaign use the
+parallel path (`submit_fit_spectra.sh` + `calibrate.sh`) instead.
 
 ## Defaults and where each knob lives
 
