@@ -64,6 +64,21 @@ in the motion_control.py comment.
 
 ---
 
+## calibrationnet/models/run_segment.py — 2026-08-24 — done
+
+### Dead `notes` column: kept, documented
+
+Found while cleaning: nothing in the codebase writes RunSegment.notes
+(the seed scripts' `notes` handling targets the source tables), and
+0 of 511 segments have one. Ruling (AS, 2026-08-24): keep the column
+as an optional manual-entry field rather than dropping it (a drop
+would be a migration = development); documented with a comment in the
+file. Also fixed during cleanup: docstring rewritten with position
+provenance (2025 manual entry vs 2026 archive readback) — new lore
+that previously lived nowhere durable.
+
+---
+
 ## calibrationnet/models/pixel.py — noted 2026-08-24 — pending (fix when file is cleaned)
 
 ### Stale docstring: wiring location

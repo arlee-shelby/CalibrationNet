@@ -19,10 +19,10 @@ class Run(Base):
 
     __tablename__ = "runs"
 
-    # Natural primary key: users query by run number, and run numbers are never reused
+    # natural primary key: users query by run number, and run numbers are never reused
     run_number: Mapped[int] = mapped_column(primary_key=True)
 
-    # Units and sign conventions:
+    # units and sign conventions:
     # biases in volts (generally negative, e.g. -300); hv in kilovolts (generally negative,
     # e.g. -27); main/udet magnet currents in amps; exb in volts; temperatures in kelvin; leakage currents in micro amps
     udet_bias: Mapped[Optional[float]]
@@ -31,7 +31,7 @@ class Run(Base):
     main: Mapped[Optional[float]]
     udet: Mapped[Optional[float]]
 
-    # timestamptz: slow controls reports time-zone-aware times (US/Eastern).
+    # timestamptz: slow controls reports time-zone-aware times (US/Eastern)
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -54,7 +54,7 @@ class Run(Base):
         order_by="RunSegment.segment_index",
     )
 
-    # Convenience read-only join of every run_pixel across the run's segments
+    # convenience read-only join of every run_pixel across the run's segments
     # (a pixel appears once per segment). Skips join through run_segments
     # when requesting pixel information about a run
     run_pixels: Mapped[List["RunPixel"]] = relationship(

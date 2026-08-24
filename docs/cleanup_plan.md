@@ -29,8 +29,15 @@ change and follows the escape hatch below.
    touched names across the repo (the table can go stale as cleanup
    progresses). Regenerate the whole table any time by asking the
    session — it is derived purely from the import statements.
-3. AS edits (on the `cleanup` branch, never `main`).
-4. Verify, scaled to the risk class:
+3. AS edits (on the `cleanup` branch, never `main`). This phase is
+   interactive, not one-shot (lesson from run.py, the first file):
+   AS asks questions about constructs and conventions while editing,
+   the assistant answers (and logs Python/library explanations to
+   docs/python_notes.md), and findings that surface go to
+   docs/cleanup_findings.md. The assistant does NOT start the diff
+   review until AS explicitly says they are done editing the file —
+   partial-state reviews waste effort and confuse both sides.
+4. When AS declares the file done, verify, scaled to the risk class:
    - all classes: `git diff` reviewed together — the assistant reads
      the diff and confirms it is behavior-neutral (comments, names,
      formatting) or flags exactly what changed semantically;
@@ -105,6 +112,13 @@ are cleaning <file>." (AS chooses the file.) The assistant's
 persistent memory carries the project rulings; this file carries the
 cleanup state. Nothing else needs re-explaining.
 
+Session scope (AS + assistant, 2026-08-24): one session per
+DIRECTORY/CLUSTER, not per file — the files in a directory share
+conventions (models/ especially), and the shared context makes later
+files in the batch go faster and stay consistent. Start a fresh
+session when switching directories, or sooner if the session gets
+sluggish or unfocused.
+
 ## Known items to address during cleanup
 
 **`recipe_isotope` backfill (decide when cleaning
@@ -166,9 +180,9 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | schema |   |
 | `calibrationnet/models/covariance.py` | calibrationnet/models/calibration.py, calibrationnet/models/spectrum_fit.py | schema |   |
 | `calibrationnet/models/pixel.py` | calibrationnet/models/run_pixel.py, scripts/optimal_positions.py | schema |   |
-| `calibrationnet/models/run.py` | calibrationnet/models/run_segment.py | schema |   |
+| `calibrationnet/models/run.py` | calibrationnet/models/run_segment.py | schema | x |
 | `calibrationnet/models/run_pixel.py` | calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py | schema |   |
-| `calibrationnet/models/run_segment.py` | calibrationnet/models/run.py, calibrationnet/models/run_pixel.py | schema |   |
+| `calibrationnet/models/run_segment.py` | calibrationnet/models/run.py, calibrationnet/models/run_pixel.py | schema | x |
 | `calibrationnet/models/source.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py | schema |   |
 | `calibrationnet/models/spectrum_fit.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/trap_filter_output.py | schema |   |
 | `calibrationnet/models/trap_filter_output.py` | calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py, calibrationnet/models/spectrum_fit.py | schema |   |

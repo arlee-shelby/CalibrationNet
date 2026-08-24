@@ -171,6 +171,29 @@ navigation for a dynamic language, at zero runtime cost. Delete them
 and the code still works; you and your tools just go back to flying
 blind through the cross-references.
 
+## Linters (and line-length rules)
+
+A linter is a program that reads source code WITHOUT running it and
+flags style and suspicious-pattern issues: unused imports, undefined
+names, trailing whitespace, lines longer than a limit. Common Python
+ones: flake8 and Ruff (linters), Black (a formatter — it rewrites the
+code to a canonical style instead of just complaining). They run from
+the terminal or in CI (a check that runs automatically on every push
+to the repository), and editors surface their output as squiggles.
+
+The "line-length rule" is the classic example: PEP 8 (Python's style
+guide) caps lines at 79 characters; Black's default is 88. The point
+is readability in side-by-side diffs/reviews and uniformity across a
+codebase — nothing about correctness. A 100-character line runs fine;
+a linter would just flag it (flake8 code E501).
+
+Relation to the type checkers met earlier: mypy/Pyright check TYPES
+("this can't be a float"), linters check STYLE and hygiene ("this
+line is too long, this import is unused"). Both are static tools; a
+project can use either, both, or neither. CalibrationNet currently
+has no linter configured — line lengths are only a consistency
+choice, not an enforced rule.
+
 ## Type hints (`-> str`, `Mapped[Optional[float]]`)
 
 Annotations describing what a function returns or a variable holds.
