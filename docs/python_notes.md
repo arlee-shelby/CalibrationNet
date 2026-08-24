@@ -116,6 +116,30 @@ release, it IS the public-facing table of contents of the schema.
 Maintenance rule: a new model class must be added in BOTH places —
 imported at the top and listed in `__all__`.
 
+## Database key terminology (natural / surrogate / primary / foreign)
+
+Four related but distinct terms, all used deliberately in models/:
+
+- **Primary key**: whichever column(s) uniquely identify a row. Every
+  table has one. "Natural" and "surrogate" describe what KIND of
+  primary key a table chose:
+- **Natural key**: a primary key made of real-world data —
+  runs.run_number, pixels.pixel_number. Chosen when the meaningful
+  number is itself unique and never reused; saves an id column and
+  lets users query by the number they actually know.
+- **Surrogate key**: an artificial auto-increment integer primary key
+  (run_pixels.id). Chosen when the row's natural identity is a
+  multi-column combination (run, segment, pixel) — child tables then
+  reference one column instead of repeating three.
+- **Foreign key**: different concept — a column that points at
+  ANOTHER table's key (run_pixels.pixel_number -> pixels,
+  source_id -> sources). A surrogate key is not a foreign key; it is
+  what other tables' foreign keys point AT.
+
+The "natural primary key" comments in models/ carry the design
+rationale (why no auto-generated id here?), so shortening them to
+"primary key" would delete the very fact they exist to record.
+
 ## `__table_args__` and CheckConstraint (models/pixel.py, run_pixel.py)
 
 `__table_args__` is another SQLAlchemy-convention dunder (same family
