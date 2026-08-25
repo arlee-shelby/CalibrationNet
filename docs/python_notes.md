@@ -116,6 +116,33 @@ release, it IS the public-facing table of contents of the schema.
 Maintenance rule: a new model class must be added in BOTH places —
 imported at the top and listed in `__all__`.
 
+## `@property` (models/adc_peak.py) — and decorators generally
+
+A line starting with `@` directly above a `def` is a DECORATOR: a
+transformer applied to the function at definition time. Think of it as
+"wrap or register this function in some machinery." Different
+decorators do different things (`@staticmethod`, `@lru_cache`, ...);
+the `@` syntax is the common packaging.
+
+`@property` specifically makes a method readable AS IF it were a plain
+attribute: with it, `peak.run_pixel` (no parentheses) runs the method
+body and returns its result. Without the decorator you would have to
+write `peak.run_pixel()`. The point is a computed value that LOOKS
+like stored data.
+
+In adc_peak.py the body is `self.spectrum_fit.trap_filter_output
+.run_pixel` — a Python-side walk up the relationship chain, three lazy
+SQL loads if the objects aren't already in memory. Hence the
+docstring's warning: this is a per-object convenience for plotting
+loops, NOT a column — it cannot appear in a SQL WHERE clause. To
+filter by run/pixel you join the chain in SQL (see queries.py).
+
+Properties are read-only unless a setter is also defined (none here).
+Contrast with the `relationship(...)` attributes: those are also
+attribute-style access with lazy SQL behind them, but SQLAlchemy knows
+their structure and CAN translate them into SQL joins; a @property is
+opaque Python that only runs object-by-object.
+
 ## Database key terminology (natural / surrogate / primary / foreign)
 
 Four related but distinct terms, all used deliberately in models/:

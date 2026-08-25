@@ -79,7 +79,31 @@ that previously lived nowhere durable.
 
 ---
 
-## calibrationnet/models/pixel.py — 2026-08-24 — done
+## calibrationnet/models/trap_filter_output.py — 2026-08-25 — done
+
+### Stale comments: CSV-era workflow (fixed)
+
+The label/source_file comments described the 2025/NERSC-era workflow
+(persistent CSV scan files on disk, curated ingest). Current workflow
+(apply_trap_filter.py) computes from raw hdf5 and the CSV is transient
+staging, deleted after successful ingest. Comments rewritten to match.
+
+### source_file column: keep (AS ruling 2026-08-25)
+
+Considered dropping it (names files that mostly no longer exist).
+Kept because: (1) it is the idempotence/dedup check for the
+failed-ingest rescue path (`WHERE source_file = ...`); (2) it is the
+only record of the waveform type token ("singles"); (3) cost ~zero.
+
+### FUTURE development item: waveform_type column
+
+Pulser waveforms (different from singles) are planned eventually.
+When that campaign is designed, trap_filter_outputs needs the wave
+type as a real column (currently only inside source_file), and the
+pulser requirements may demand more (settings columns, energies
+semantics). Deliberately DEFERRED (AS + assistant, 2026-08-25): no
+current data is wrong, no pulser data exists, and the future design
+should drive the schema. Do NOT build speculatively during cleanup.
 
 ### Stale docstring: wiring location (fixed)
 

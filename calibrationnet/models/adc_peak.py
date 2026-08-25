@@ -13,19 +13,17 @@ if TYPE_CHECKING:
 
 class ADCPeak(Base):
     """One fitted peak extracted from a SpectrumFit, in ADC units — the
-    ADC side of a calibration point. Its centroid +- error, paired with a
-    known keV value (KeVPeak) for the decay line it is matched to, is what
-    feeds a calibration."""
+    ADC side of a calibration point. Its centroid value and error with the
+    known keV value (KeVPeak) for the decay energy line they are matched to feeds a 
+    calibration. Other relevant information about the peak (width and amplitude, 
+    and their errors) is also stored with the peak centroid information. 
+    """
 
     __tablename__ = "adc_peaks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    spectrum_fit_id: Mapped[int] = mapped_column(
-        ForeignKey("spectrum_fits.id"), index=True
-    )
-    isotope_decay_energy_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("isotope_decay_energies.id"), index=True
-    )
+    spectrum_fit_id: Mapped[int] = mapped_column(ForeignKey("spectrum_fits.id"), index=True)
+    isotope_decay_energy_id: Mapped[Optional[int]] = mapped_column(ForeignKey("isotope_decay_energies.id"), index=True)
 
     centroid_adc: Mapped[float]
     centroid_error_adc: Mapped[Optional[float]]
@@ -34,21 +32,16 @@ class ADCPeak(Base):
     amplitude: Mapped[Optional[float]]
     amplitude_error: Mapped[Optional[float]]
 
-    spectrum_fit: Mapped["SpectrumFit"] = relationship(
-        back_populates="adc_peaks"
-    )
-    isotope_decay_energy: Mapped[Optional["IsotopeDecayEnergy"]] = (
-        relationship(back_populates="adc_peaks")
-    )
-    calibration_points: Mapped[List["CalibrationPoint"]] = relationship(
-        back_populates="adc_peak"
-    )
+    spectrum_fit: Mapped["SpectrumFit"] = relationship(back_populates="adc_peaks")
+    isotope_decay_energy: Mapped[Optional["IsotopeDecayEnergy"]] = (relationship(back_populates="adc_peaks"))
+    calibration_points: Mapped[List["CalibrationPoint"]] = relationship(back_populates="adc_peak")
 
     @property
     def run_pixel(self):
-        """Shortcut through fit -> output — handy in plotting loops. To
-        FILTER by run or pixel in SQL, join the chain instead (see
-        calibrationnet/queries.py)."""
+        """Shortcut through spectrum fit -> trap filter output -> run pixel when you 
+        already have the ADCPeak, i.e. you cannot use this property to FILTER by run or pixel in SQL. 
+        To do that, you'd need to use joins for the chain instead (see for examples calibrationnet/queries.py).
+        """
         return self.spectrum_fit.trap_filter_output.run_pixel
 
     def __repr__(self) -> str:
