@@ -185,9 +185,9 @@ and confirm the count equals the stored number_subruns.
 
 | file | imported/used by | risk class | done |
 |---|---|---|---|
-| `calibrationnet/models/__init__.py` | (nothing imports it — leaf) | schema |   |
-| `calibrationnet/models/adc_peak.py` | calibrationnet/models/calibration.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py | schema |   |
-| `calibrationnet/models/base.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_pixel.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py, calibrationnet/models/trap_filter_output.py | schema |   |
+| `calibrationnet/models/__init__.py` | (nothing imports it — leaf) | schema | x |
+| `calibrationnet/models/adc_peak.py` | calibrationnet/models/calibration.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py | schema | x |
+| `calibrationnet/models/base.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_pixel.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | schema |   |
 | `calibrationnet/models/covariance.py` | calibrationnet/models/calibration.py, calibrationnet/models/spectrum_fit.py | schema |   |
 | `calibrationnet/models/pixel.py` | calibrationnet/models/run_pixel.py, scripts/optimal_positions.py | schema | x |
@@ -195,7 +195,7 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/run_pixel.py` | calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/run_segment.py` | calibrationnet/models/run.py, calibrationnet/models/run_pixel.py | schema | x |
 | `calibrationnet/models/source.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py | schema |   |
-| `calibrationnet/models/spectrum_fit.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/trap_filter_output.py | schema |   |
+| `calibrationnet/models/spectrum_fit.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/trap_filter_output.py` | calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py, calibrationnet/models/spectrum_fit.py | schema | x |
 
 ### calibrationnet/pipeline/

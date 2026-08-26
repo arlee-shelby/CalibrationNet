@@ -41,8 +41,8 @@ class TrapFilterOutput(Base):
     trap_flattop: Mapped[Optional[float]]
     trap_falltime: Mapped[Optional[float]]
 
-    # label specifies a trap filter identifier, i.e. "nabpy-standard" or "short-trap-Fall2025" etc. that
-    # specifies groups of trap filter setting that were applied
+    # label specifies a trap filter identifier, i.e. "nabpy-standard" or "short-trap-Fall2025" etc.
+    # that was applied to groups of data or runs
     label: Mapped[Optional[str]] = mapped_column(String(50))
 
     # source_file gives the name of the csv file generated during the trap filter application

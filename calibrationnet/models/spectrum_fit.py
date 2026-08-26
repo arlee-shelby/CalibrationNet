@@ -14,69 +14,63 @@ if TYPE_CHECKING:
 
 
 class SpectrumFit(CovarianceMixin, Base):
-    """One fit of PART of a trap filter output's spectrum.
+    """A fit from a trap filter output spectrum (i.e. conversion electron CE and Auger fits
+    are stored as separate SpectrumFit objects even though they come from the same
+    trap filter output). The role of this table is to store all the results from the fits (i.e.
+    not just the peak information, which is extracted from the fit, but also other relevant
+    information).
 
-    A single output usually takes several fits: e.g. the six high-intensity
-    conversion-electron peaks are fit simultaneously over one ADC window,
-    and the low-energy Auger peaks separately over another. Each such fit
-    is one row here — `label` says which fit it is and fit_range_low/high
-    say which ADC window it covered — and the ADC peaks broken out of all of a
-    run_pixel's fits together feed one calibration.
-
-    Uncertainty bookkeeping: `pars`/`par_errors` cover every parameter
-    (fixed ones like num_peaks have no error). `var_names` lists the VARIED
-    parameters in lmfit's order, and `covariance` is the matrix over
-    exactly those, in that order. Parameter correlations are NOT stored:
-    correlations() (from CovarianceMixin) derives them on demand from the
-    covariance, exactly matching lmfit's .correl, so nothing can ever
-    disagree. See docs/fit_storage.md for a worked example.
+    Information stored in a row of this table: "pars"/"par_errors" are the fitted values and errors
+    for the parameters in the fit (fixed parameters like num_peaks have no error).
+    "var_names" lists the VARIED parameters in the order they were added to lmfit. "covariance" is the
+    covariance matrix for the parameters in the fit, in that same order. Parameter correlations are NOT stored
+    but are calculated using correlations() from CovarianceMixin which derives them on demand from the
+    covariance matrix stored here, exactly matching lmfit's .correl, so nothing can ever
+    disagree. See docs/fit_storage.md for a worked example. Each SpectrumFit row also stores the chi2, reduced chi2,
+    and number of degrees of freedom for the fit.
     """
 
     __tablename__ = "spectrum_fits"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    trap_filter_output_id: Mapped[int] = mapped_column(
-        ForeignKey("trap_filter_outputs.id"), index=True
-    )
+    trap_filter_output_id: Mapped[int] = mapped_column(ForeignKey("trap_filter_outputs.id"), index=True)
 
-    # Which of the output's fits this is, e.g. "ce-6peak", "auger-2peak".
+    # specific label for fit type, ex: "ce-6peak", "auger-2peak"
     label: Mapped[Optional[str]] = mapped_column(String(50))
-    # The fitted ADC window (histogram bin bounds).
+
+    # the fit range used for the fit (ADC)
     fit_range_low: Mapped[Optional[int]]
     fit_range_high: Mapped[Optional[int]]
-    n_peaks: Mapped[Optional[int]]
 
-    # Goodness of fit, straight from the minimizer.
+    n_peaks: Mapped[Optional[int]]
     chi2: Mapped[Optional[float]]
     ndf: Mapped[Optional[int]]
     reduced_chi2: Mapped[Optional[float]]
+
+    # boolean which indicates if the fit failed or succeeded
+    # used during the fit process to only add fits which have succeeded to the database
     success: Mapped[Optional[bool]]
 
-    # {name: value} / {name: stderr} for ALL parameters.
+    # {name: value} / {name: stderr}
     pars: Mapped[Optional[dict]] = mapped_column(JSONB)
     par_errors: Mapped[Optional[dict]] = mapped_column(JSONB)
-    # Varied-parameter names, in the order of covariance's rows/columns.
+
+    # varied-parameter names, in the order added to lmfit and of the covariance matrix rows/columns.
     var_names: Mapped[Optional[list]] = mapped_column(JSONB)
     covariance: Mapped[Optional[list]] = mapped_column(JSONB)
 
-    # Inputs that produced this fit (bounds, peak-finder settings, initial
-    # widths, ...) so any fit can be reproduced exactly.
+    # all the inputs that produced this fit (bounds, peak-finder settings, initial widths, ...)
+    # so any fit can be reproduced exactly as it was made
     config: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    trap_filter_output: Mapped["TrapFilterOutput"] = relationship(
-        back_populates="fits"
-    )
-    adc_peaks: Mapped[List["ADCPeak"]] = relationship(
-        back_populates="spectrum_fit", cascade="all, delete-orphan"
-    )
+    trap_filter_output: Mapped["TrapFilterOutput"] = relationship(back_populates="fits")
+    adc_peaks: Mapped[List["ADCPeak"]] = relationship(back_populates="spectrum_fit", cascade="all, delete-orphan")
 
     @classmethod
-    def from_lmfit(cls, result, *, trap_filter_output=None, label=None,
-                   fit_range=(None, None), config=None) -> "SpectrumFit":
-        """Build a row from an lmfit MinimizerResult, storing exactly what
-        the minimizer reported."""
+    def from_lmfit(cls, result, *, trap_filter_output=None, label=None, fit_range=(None, None), config=None) -> "SpectrumFit":
+        """Build a database row from an lmfit Minimizer result, storing exactly what the minimizer reported."""
         covariance = getattr(result, "covar", None)
         return cls(
             trap_filter_output=trap_filter_output,
@@ -100,10 +94,10 @@ class SpectrumFit(CovarianceMixin, Base):
 
     @property
     def run_pixel(self):
-        """Shortcut through the output — handy in plotting loops
-        (fit.run_pixel.run_number / .pixel_number). To FILTER by run or
-        pixel in SQL, join through TrapFilterOutput to RunPixel instead
-        (see calibrationnet/queries.py)."""
+        """Shortcut through the trap filter output to run pixel when you already
+        have the SpectrumFit, i.e. you cannot use this property to FILTER by run or pixel
+        in SQL. To do that, you'd need to use joins for the chain instead (see calibrationnet/queries.py).
+        """
         return self.trap_filter_output.run_pixel
 
     def __repr__(self) -> str:

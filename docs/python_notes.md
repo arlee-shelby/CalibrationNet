@@ -143,6 +143,122 @@ attribute-style access with lazy SQL behind them, but SQLAlchemy knows
 their structure and CAN translate them into SQL joins; a @property is
 opaque Python that only runs object-by-object.
 
+## Mixins and multiple inheritance (models/spectrum_fit.py, calibration.py)
+
+`class SpectrumFit(CovarianceMixin, Base)` lists TWO parent classes —
+multiple inheritance. The class gets everything from both: from `Base`
+it becomes a SQLAlchemy model; from `CovarianceMixin` it gains the
+`correlations()` method.
+
+A MIXIN is a class designed only to donate behavior — it is not a
+model, has no table, and is never instantiated on its own
+(covariance.py defines no `__tablename__`, no columns). It works by
+assumption: `correlations()` uses `self.var_names` and
+`self.covariance`, so any class that stores those two attributes can
+mix it in. SpectrumFit and Calibration both do — one implementation
+of the correlation math, two tables that share it. That is the whole
+point: the alternative would be copy-pasting the method into both
+model files, which then drift apart.
+
+Convention: mixins are named `...Mixin` and listed BEFORE the base
+class in the parent list.
+
+## `@classmethod` (models/spectrum_fit.py: from_lmfit)
+
+Cousin of `@property`: another decorator changing how a method is
+called. A `@classmethod` is called on the CLASS, not on an instance —
+`SpectrumFit.from_lmfit(result, ...)` — and receives the class itself
+as its first argument (named `cls` by convention, mirroring `self`).
+
+Its classic use, and the use here, is an ALTERNATIVE CONSTRUCTOR: a
+named recipe for building an instance from a specific kind of input.
+`from_lmfit` translates an lmfit MinimizerResult into a SpectrumFit
+row (chi2 from result.chisqr, pars from result.params, ...), ending in
+`return cls(...)` — i.e. "construct one of me." Putting it on the
+class keeps the lmfit->database mapping in exactly one place; callers
+never hand-copy minimizer fields.
+
+The naming pattern `from_<source>` (from_lmfit, and e.g. Python's own
+dict.fromkeys, datetime.fromtimestamp) signals this idiom.
+
+### The bare `*` in from_lmfit's signature (vs `*args`)
+
+The `*` symbol does two different jobs in a function signature,
+depending on whether it has a name attached. Ground truth first: any
+argument can be passed by position or by name —
+
+    def fit(window, width): ...
+    fit(400, 3.0)                  # positional: matched by order
+    fit(window=400, width=3.0)     # keyword: matched by name
+
+**`*args` — a collector.** A named `*` parameter soaks up any number
+of extra positional arguments into a tuple:
+
+    def total(*args):
+        return sum(args)
+    total(1, 2, 3)                 # args = (1, 2, 3)
+
+**Bare `*` — a fence.** No name attached, and the meaning flips: it
+BANS positional arguments from that point on. In
+
+    def from_lmfit(cls, result, *, label=None, config=None): ...
+
+`result` may be positional; everything after the fence must be passed
+as `label=...`, `config=...`. A positional attempt fails immediately:
+
+    SpectrumFit.from_lmfit(result, "ce-6peak")
+    # TypeError: takes 2 positional arguments but 3 were given
+
+Both behaviors are one rule: `*` marks where positional arguments end
+up. With `*args` they land in the tuple; with a bare `*` there is no
+bucket, so extras are an error — "a collector with no bucket."
+
+Why from_lmfit wants the fence: four similar-looking optional
+settings. Positional calls would depend on memorized parameter order,
+and a future reorder would silently shift values into wrong slots.
+The fence forces self-documenting calls (`label="ce-6peak"`).
+
+Recognition rule: `*name` = "accepts many positionals";
+bare `*` = "accepts no more positionals". (The rarer `/` marker is
+the mirror image: parameters before it are positional-only.)
+
+### `-> "SpectrumFit"` — a quoted (forward) reference in a return hint
+
+Same `->` return hint as `-> str`, saying from_lmfit returns a
+SpectrumFit instance. The quotes are needed because the `def` line
+runs while the SpectrumFit class is still being built — the name is
+only bound after the whole class body finishes, so unquoted it would
+be a NameError at import:
+
+    class SpectrumFit(CovarianceMixin, Base):
+        @classmethod
+        def from_lmfit(cls, ...) -> "SpectrumFit":   # name not bound yet
+            ...
+
+Quoting makes it a FORWARD REFERENCE that type checkers resolve once
+the class exists — the same quoted-name trick as
+Mapped[List["RunSegment"]], with a different resolver (type checker
+vs SQLAlchemy registry) and reason (mid-definition vs circular
+imports). Runtime ignores it either way.
+
+## JSONB columns (models/spectrum_fit.py, covariance storage)
+
+`mapped_column(JSONB)` uses PostgreSQL's binary JSON type: the whole
+Python dict or list is stored in ONE database cell — `pars` is a
+{name: value} dict, `covariance` a nested list (the matrix). SQLAlchemy
+converts Python <-> JSON automatically on write/read.
+
+Why here: fit parameters differ per recipe (a 6-peak CE fit and a
+2-peak Auger fit have different parameter sets), so fixed columns per
+parameter would need a schema migration every time a recipe changed.
+JSONB keeps the schema stable while the payload varies. Trade-offs:
+the database cannot enforce structure inside the blob (no constraints
+on keys), and querying inside it needs JSON operators — fine for
+"store exactly what the minimizer reported" data that is read back
+whole. Postgres-specific (imported from sqlalchemy.dialects.postgresql,
+like ARRAY in trap_filter_output.py) — this schema deliberately uses
+Postgres features rather than staying database-portable.
+
 ## Database key terminology (natural / surrogate / primary / foreign)
 
 Four related but distinct terms, all used deliberately in models/:

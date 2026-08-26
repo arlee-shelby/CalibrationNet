@@ -49,18 +49,12 @@ class Run(Base):
 
     # a run segment is defined as a part of a calibration run where the source position was unchanged
     # i.e. in some 2026 runs, with the new automation, continuous runs have multiple positions within it
-    segments: Mapped[List["RunSegment"]] = relationship(
-        back_populates="run", cascade="all, delete-orphan",
-        order_by="RunSegment.segment_index",
-    )
+    segments: Mapped[List["RunSegment"]] = relationship(back_populates="run", cascade="all, delete-orphan",order_by="RunSegment.segment_index",)
 
     # convenience read-only join of every run_pixel across the run's segments
     # (a pixel appears once per segment). Skips join through run_segments
     # when requesting pixel information about a run
-    run_pixels: Mapped[List["RunPixel"]] = relationship(
-        primaryjoin="Run.run_number == foreign(RunPixel.run_number)",
-        viewonly=True,
-    )
+    run_pixels: Mapped[List["RunPixel"]] = relationship(primaryjoin="Run.run_number == foreign(RunPixel.run_number)",viewonly=True,)
 
     def __repr__(self) -> str:
         return f"Run(run_number={self.run_number})"
