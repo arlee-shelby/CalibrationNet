@@ -30,16 +30,19 @@ imports — `scripts/` imports `calibrationnet/acquisition/` imports the
    and how they are computed. Schema (`models/`), the frozen fit
    model, recipes, the retry ladder (`fitting.py`), calibration math
    (`calibration.py`), detector/tray geometry, the notebook read
-   layer (`queries.py`). Nothing here knows where data comes from —
+   layer (`queries.py`), and source assignment
+   (`source_assignment.py` — it derives which source sat over which
+   pixel from data already IN the database plus `positions.py`
+   anchors; it reads nothing external, which is why it lives here
+   and not in `acquisition/`). Nothing here knows where data comes from —
    no h5 parsing, no slow controls, no SLURM — which is what let
    `fitting.py`/`calibration.py` be reused verbatim by the offline
    (database-free) pipeline in `scripts/offline/`.
 2. **`calibrationnet/acquisition/` — the data-ACQUISITION layer:** the
    logic that reads the outside world and records it — slow-controls
    and motion-archive readers, waveform/h5 handling, trap filtering,
-   board-channel and wiring maps, run/segment ingest — plus the
-   source-assignment bookkeeping. These import the root's models and
-   geometry; the root never needs them.
+   board-channel and wiring maps, run/segment ingest. These import
+   the root's models and geometry; the root never needs them.
 3. **`scripts/` — command-line entry points:** argparse drivers plus
    workflow glue (progress printing, review/failure CSVs, SLURM
    handoffs). Each imports its reusable logic from the package.

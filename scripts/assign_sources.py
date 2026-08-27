@@ -36,7 +36,7 @@ from calibrationnet.models import (
     Source,
     SourceInstallation,
 )
-from calibrationnet.acquisition.source_assignment import (
+from calibrationnet.source_assignment import (
     MEMBER_RADIUS,
     VERIFY_RADIUS,
     assign_from_preds,

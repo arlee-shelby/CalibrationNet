@@ -60,7 +60,7 @@ from calibrationnet.geometry import (
 )
 from calibrationnet.models import Run, RunSegment, SourceInstallation
 from calibrationnet.positions import horizontal_limit
-from calibrationnet.acquisition.source_assignment import (
+from calibrationnet.source_assignment import (
     check_anchor_installation,
     compute_baselines,
     excess_map,

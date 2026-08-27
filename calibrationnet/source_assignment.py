@@ -33,10 +33,10 @@ from statistics import median
 
 from sqlalchemy import func, select
 
-from ..db import get_session
-from ..geometry import physical_position
-from ..models import Pixel, RunPixel, Source, SourceInstallation, TrapFilterOutput
-from ..positions import anchor_for, predict_slot_position
+from .db import get_session
+from .geometry import physical_position
+from .models import Pixel, RunPixel, Source, SourceInstallation, TrapFilterOutput
+from .positions import anchor_for, predict_slot_position
 
 # Hex centers: adjacent pixels are sqrt(3) apart.
 PIXEL_PITCH = math.sqrt(3)

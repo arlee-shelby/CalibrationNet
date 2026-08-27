@@ -232,3 +232,36 @@ is accurate history). models/ and alembic/ contain no references
 all 9 acquisition modules import cleanly; `benchmark_fits.py
 --check-only` integrity OK (frozen md5 match, changeable functions
 identical).
+
+---
+
+## calibrationnet/acquisition/source_assignment.py → calibrationnet/source_assignment.py — 2026-08-27 — done
+
+### Module moved to the package root (behavior-neutral, applied repo-wide)
+
+**Decision (AS, 2026-08-27):** source assignment is not data
+acquisition — it derives run metadata from data already IN the
+database plus positions.py anchors, and touches nothing external
+(no slow controls, no h5, no archive). Under the three-layer rule
+(docs/repo_layout.md) it belongs in the `calibrationnet/` root, so
+the acquisition/ rename made the misplacement visible and the module
+moved up.
+
+**Scope applied:** `git mv` (history follows); its own relative
+imports dedented one level (`from ..db` → `from .db`, likewise
+geometry/models/positions); both importers
+(scripts/assign_sources.py, scripts/optimal_positions.py); path
+mentions in docs/source_assignment.md, docs/cleanup_plan.md ("Where
+the lore lives" + the inventory tables — row relocated from the
+acquisition table to the calibrationnet/ table), and
+docs/repo_layout.md (layer 1 now lists source assignment with the
+rationale; layer 2 dropped "plus the source-assignment
+bookkeeping"). models/run_pixel.py's comment says the bare filename
+"source_assignment.py" — still accurate, untouched. The module's own
+docstring (a durable lore home) is location-agnostic — unchanged.
+
+**Verified 2026-08-27:** py_compile clean repo-wide; both
+`calibrationnet.source_assignment` and `calibrationnet.acquisition`
+import cleanly (field_key resolves); `benchmark_fits.py
+--check-only` integrity OK; grep shows zero remaining
+`acquisition[./]source_assignment` references.
