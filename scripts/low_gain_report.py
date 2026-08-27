@@ -44,6 +44,9 @@ def main() -> None:
                         help="restrict to these runs (default: all)")
     parser.add_argument("--tf-label", default=None,
                         help="restrict to one trap filter label")
+    parser.add_argument("--cal-label", default="jin2026a",
+                        help="calibration label family to read the "
+                             "calibrated gain from (default: jin2026a)")
     parser.add_argument("--threshold", type=float, default=0.90,
                         help="flag pixels with gain ratio below this "
                              "(default 0.90); pixels above 1/threshold "
@@ -88,7 +91,8 @@ def main() -> None:
             cal = session.execute(
                 select(Calibration)
                 .where(Calibration.trap_filter_output_id == tfo.id,
-                       Calibration.is_current)).scalars().first()
+                       Calibration.label == args.cal_label,
+                       Calibration.calibration_type == "linear")).scalars().first()
             if cal is not None and cal.linear_term:
                 cal_gain = (NOMINAL_RELATION["Bi-207"]["gain_kev_per_adc"]
                             / cal.linear_term)

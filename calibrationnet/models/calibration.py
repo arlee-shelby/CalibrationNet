@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, text
+from sqlalchemy import ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,56 +16,44 @@ if TYPE_CHECKING:
 
 
 class Calibration(CovarianceMixin, Base):
-    """An ADC -> keV calibration (linear or quadratic) for one run_pixel,
-    fit from measured ADC centroids against known keV values.
+    """An ADC -> keV calibration (linear or quadratic) for one run_pixel.
 
-    A calibration deliberately does NOT link to one spectrum_fit: its
-    points come from SEVERAL fits (the CE window and the Auger window),
-    so which fits contributed is recorded per point, through
-    calibration_points -> adc_peak -> spectrum_fit. It DOES link to one
-    trap_filter_output: the ADC scale is a property of the trap setting,
-    so every point of a calibration must come from fits of the same
+    A calibration deliberately does not link to a single spectrum_fit,
+    because the calibration points come from multiple fits (i.e. the conversion electron (CE)
+    and the Auger fits). So, which fits contributed to one calibration is recorded per point, through
+    calibration_points -> adc_peak -> spectrum_fit. Calibrations do link to a single
+    trap_filter_output because every point of a calibration must come from fits of the same
     output — and "calibrations for this pixel at these settings" becomes
     a direct join.
 
-    Multiple attempts are kept — different trap settings, and
-    recalibrations when the known energies are updated from simulation —
-    distinguished by `label`; a partial unique index enforces at most one
-    is_current per (run_pixel, calibration_type).
+    Multiple calibrations can be stored for the same run pixel, i.e. by using different trap settings,
+    using different "known" keV energies (ex: from simulation vs. nndc values). They are
+    distinguished by "label" (ex: "nndc", "jin2026a", etc.) which are permanent.
+    Calibrations are distinguished by an identity: trap filter output, type, label. Re-running a
+    label replaces its calibration in place, i.e. to store a new calibration, you must have a
+    different label.
 
-    Uncertainty bookkeeping follows the same pattern as spectrum_fits:
-    the coefficients get dedicated columns (small, fixed set, directly
-    queryable), `var_names` + `covariance` carry the full uncertainty
-    structure, and correlations are derived on demand by correlations()
-    (from CovarianceMixin), never stored. CONVENTION: every fit stored
-    in this database uses lmfit with scale_covar=False — raw
-    chi-square-weighted uncertainties, never rescaled by reduced chi2
-    (lmfit's default WOULD rescale); whether and when to scale is
-    always the analyst's later decision. See docs/fit_storage.md.
+    The calibration parameter storage follows the same pattern as spectrum_fits.
+    The coefficients and their error get dedicated columns, "covariance" gives the parameter
+    covariance matrix and together with "var_names" can be used to calculate the correlations,
+    which are derived on demand by correlations() (from CovarianceMixin), but not stored.
+    Every fit stored in this database uses lmfit with scale_covar=False (so that uncertainty scaling
+    by the square root of the reduced chi2 is manual, not a default). Whether and when to scale is
+    up to the analyst's later decision. See docs/fit_storage.md.
     """
 
     __tablename__ = "calibrations"
-    # is_current is DORMANT (bookkeeping ruling, AS 2026-08-20): labels
-    # are permanent coexisting families; identity is (trap filter
-    # output, type, label) and same-label re-runs replace in place.
-    # The old one-current-per-(run_pixel, type) partial index was
-    # dropped by migration 6ed9910381f5.
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    run_pixel_id: Mapped[int] = mapped_column(
-        ForeignKey("run_pixels.id"), index=True
-    )
-    trap_filter_output_id: Mapped[int] = mapped_column(
-        ForeignKey("trap_filter_outputs.id"), index=True
-    )
+    run_pixel_id: Mapped[int] = mapped_column(ForeignKey("run_pixels.id"), index=True)
+    trap_filter_output_id: Mapped[int] = mapped_column(ForeignKey("trap_filter_outputs.id"), index=True)
 
-    # Which calibration attempt this is, e.g. "nndc-2026", "sim-corrected".
+    # which calibration identity this is, e.g. "jin2026a"
     label: Mapped[Optional[str]] = mapped_column(String(50))
+
     calibration_type: Mapped[str] = mapped_column(String(20))  # "linear" | "quadratic"
 
-    # The fitted coefficients: keV = constant + linear*ADC (+ quadratic*ADC^2).
-    # UNITS: constant in keV; linear (the gain) in keV/ADC; quadratic in
-    # keV/ADC^2. Errors share their coefficient's units.
+    # the fitted calibration parameters: keV = constant + linear*ADC (+ quadratic*ADC^2)
     constant_term: Mapped[Optional[float]]
     constant_error: Mapped[Optional[float]]
     linear_term: Mapped[Optional[float]]
@@ -73,72 +61,53 @@ class Calibration(CovarianceMixin, Base):
     quadratic_term: Mapped[Optional[float]]
     quadratic_error: Mapped[Optional[float]]
 
-    # Goodness of fit, straight from the minimizer.
     chi2: Mapped[Optional[float]]
     ndf: Mapped[Optional[int]]
     reduced_chi2: Mapped[Optional[float]]
     success: Mapped[Optional[bool]]
 
-    # Varied-parameter names, in the order of covariance's rows/columns
-    # (['constant', 'linear'] for linear, + 'quadratic' for quadratic).
+    # varied-parameter names, in the order they were added to lmfit and of
+    # the covariance matrix rows/columns
+    # (['constant', 'linear'] for linear, + 'quadratic' for quadratic)
     var_names: Mapped[Optional[list]] = mapped_column(JSONB)
     covariance: Mapped[Optional[list]] = mapped_column(JSONB)
 
-    # Fit inputs that don't have a dedicated column (weighting choices,
-    # minimizer settings, ...) so any calibration can be reproduced.
+    # the fit inputs that don't have a dedicated column (weighting choices,
+    # minimizer settings, ...) so any calibration can be exactly reproduced
     config: Mapped[Optional[dict]] = mapped_column(JSONB)
 
-    is_current: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    run_pixel: Mapped["RunPixel"] = relationship(
-        back_populates="calibrations"
-    )
-    trap_filter_output: Mapped["TrapFilterOutput"] = relationship(
-        back_populates="calibrations"
-    )
-    points: Mapped[List["CalibrationPoint"]] = relationship(
-        back_populates="calibration", cascade="all, delete-orphan"
-    )
+    run_pixel: Mapped["RunPixel"] = relationship(back_populates="calibrations")
+    trap_filter_output: Mapped["TrapFilterOutput"] = relationship(back_populates="calibrations")
+    points: Mapped[List["CalibrationPoint"]] = relationship(back_populates="calibration", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return (
             f"Calibration(id={self.id}, label={self.label}, "
-            f"type={self.calibration_type}, current={self.is_current})"
+            f"type={self.calibration_type})"
         )
 
 
 class CalibrationPoint(Base):
     """One (x, y) point of a calibration fit: the measured ADC centroid
-    (adc_peak) paired with the assumed keV value (kev_peak) for the same
-    decay line. Linking to a specific KeVPeak row — not just the decay
-    line — records which version of the known values (NNDC vs. a
-    simulation correction for that physical source) was used, so every
-    calibration stays reproducible."""
+    (adc_peak, which comes from the spectrum fit) paired with the assumed keV
+    value (kev_peak, which by default comes from nndc, but can also come from simulation)
+    for the same decay line. The direct link to a KeVPeak row makes calibration reproducible.
+
+    This class is grouped with "Calibration" as the two exist in tandem.
+    """
 
     __tablename__ = "calibration_points"
     __table_args__ = (UniqueConstraint("calibration_id", "adc_peak_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    calibration_id: Mapped[int] = mapped_column(
-        ForeignKey("calibrations.id"), index=True
-    )
-    adc_peak_id: Mapped[int] = mapped_column(
-        ForeignKey("adc_peaks.id"), index=True
-    )
-    kev_peak_id: Mapped[int] = mapped_column(
-        ForeignKey("kev_peaks.id"), index=True
-    )
-
-    calibration: Mapped["Calibration"] = relationship(
-        back_populates="points"
-    )
-    adc_peak: Mapped["ADCPeak"] = relationship(
-        back_populates="calibration_points"
-    )
-    kev_peak: Mapped["KeVPeak"] = relationship(
-        back_populates="calibration_points"
-    )
+    calibration_id: Mapped[int] = mapped_column(ForeignKey("calibrations.id"), index=True)
+    adc_peak_id: Mapped[int] = mapped_column(ForeignKey("adc_peaks.id"), index=True)
+    kev_peak_id: Mapped[int] = mapped_column(ForeignKey("kev_peaks.id"), index=True)
+    calibration: Mapped["Calibration"] = relationship(back_populates="points")
+    adc_peak: Mapped["ADCPeak"] = relationship(back_populates="calibration_points")
+    kev_peak: Mapped["KeVPeak"] = relationship(back_populates="calibration_points")
 
     def __repr__(self) -> str:
         return (

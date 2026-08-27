@@ -142,8 +142,7 @@ def peaks_for_pixel(session, pixel_number, *, line_label=None,
 
 def calibrations_for_pixel(session, pixel_number, *, run_numbers=None,
                            segment_index=None, trap=None, tf_label=None,
-                           calibration_type=None, current_only=False,
-                           **run_settings):
+                           calibration_type=None, **run_settings):
     """[(Run, RunPixel, Calibration)] for one pixel across runs.
 
     Any Run column can be passed as a keyword to filter on the run's
@@ -160,8 +159,6 @@ def calibrations_for_pixel(session, pixel_number, *, run_numbers=None,
     stmt = _trap_filter(stmt, trap, tf_label)
     if calibration_type is not None:
         stmt = stmt.where(Calibration.calibration_type == calibration_type)
-    if current_only:
-        stmt = stmt.where(Calibration.is_current)
     for column, value in run_settings.items():
         stmt = stmt.where(getattr(Run, column) == value)
     return session.execute(stmt).all()

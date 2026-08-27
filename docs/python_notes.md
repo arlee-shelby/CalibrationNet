@@ -259,6 +259,24 @@ whole. Postgres-specific (imported from sqlalchemy.dialects.postgresql,
 like ARRAY in trap_filter_output.py) — this schema deliberately uses
 Postgres features rather than staying database-portable.
 
+## Module organization: one file per CONCEPT, not per class
+
+Python does not require (or encourage) one-class-per-file the way
+Java does. calibration.py holds both Calibration and CalibrationPoint
+because they are one concept — "a fitted curve and the points it was
+fit from":
+
+- ownership: points carry cascade="all, delete-orphan" — a point
+  cannot outlive its calibration and is never used on its own;
+- readability: whoever reads one always needs the other.
+
+Contrast Run vs RunSegment (separate files): a segment has its own
+independent life and users. And source.py holds FIVE classes — the
+whole interlocking sources-and-line-energies design as one unit.
+
+Rule of thumb: a class earns its own file when it has its own users
+and its own story; otherwise it lives with its concept.
+
 ## Database key terminology (natural / surrogate / primary / foreign)
 
 Four related but distinct terms, all used deliberately in models/:

@@ -105,6 +105,10 @@ semantics). Deliberately DEFERRED (AS + assistant, 2026-08-25): no
 current data is wrong, no pulser data exists, and the future design
 should drive the schema. Do NOT build speculatively during cleanup.
 
+---
+
+## calibrationnet/models/pixel.py — 2026-08-24 — done
+
 ### Stale docstring: wiring location (fixed)
 
 The class docstring said wiring ("board channel, preamp, FET") is
@@ -124,3 +128,49 @@ and git history preserves every old map; (3) if per-run wiring history
 ever became analytically important, the fix is a migration moving
 preamp/fet to RunPixel (development, deferred until needed). The
 docstring now states the in-place-update + git-history design.
+
+---
+
+## calibrationnet/models/calibration.py — 2026-08-27 — done (code + migration aff8f130ae93 applied and verified)
+
+**Verification (2026-08-27):** py_compile x4 OK; benchmark_fits
+--check-only green; zero is_current/current_only references outside
+alembic history; migration aff8f130ae93 ran with lock_timeout=5s,
+is_current absent from calibrationnet.calibrations; low_gain_report
+smoke identical before/after (run 8622, 11 fitted pixels); ORM
+roundtrip on 2784 calibrations OK. low_gain_report now takes
+--cal-label (default jin2026a) instead of the is_current filter.
+
+**Side observation while verifying:** the database holds a leftover
+schema `calibration_test` with an early-design calibrations table
+(gain/offset/correlation columns). Untouched by the migration and by
+all code (search_path is `calibrationnet`). DB-side cruft, not repo
+content — decide someday whether to drop the schema; no urgency.
+
+### Drop dormant `is_current` column (escape hatch, AS ruling 2026-08-27)
+
+Executing the cleanup_plan known item (full history there). Ruling:
+full drop, per its RECOMMENDED option. Also fixed on the way, per the
+same item: the stale docstring sentence claiming the partial index
+still enforces one is_current per (run_pixel, type) (contradicted the
+dormancy comment below it), and the low_gain_report.py wart (selected
+a calibration by trap output + is_current with `.first()` and no
+label/type filter — arbitrary row under the label scheme).
+
+Plan (code first, migration second — the ORM tolerates an extra DB
+column, not a missing one):
+1. models/calibration.py — remove the is_current field, the dormancy
+   comment block, the docstring claim, and is_current from __repr__.
+2. queries.py — remove calibrations_for_pixel's `current_only`
+   parameter and its no-op filter (no repo callers; notebooks that
+   pass current_only= must drop it).
+3. scripts/calibrate.py — delete the `is_current=True` line.
+4. scripts/low_gain_report.py — filter explicitly by
+   (label="jin2026a", calibration_type="linear").
+5. Migration (drop column; downgrade restores it nullable=False,
+   server_default true) run on a QUIET database (DDL hangs behind
+   open fitter transactions).
+
+Verification: py_compile all four; benchmark_fits --check-only;
+low_gain_report smoke run before AND after the migration; column
+absence confirmed via information_schema.

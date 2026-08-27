@@ -135,7 +135,6 @@ def store(session, rp, tfo, label, cal_type, result, pairs,
                              "reduced_chi2 = mean squared residual "
                              "in keV^2",
                 **(extra_config or {})},
-        is_current=True,   # dormant column: labels never interact
     )
     session.add(calibration)
     for peak, kev_row in pairs:

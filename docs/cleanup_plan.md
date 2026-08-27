@@ -145,6 +145,52 @@ peaks — the skip changes nothing. Options:
 Either way the redevelopment ritual is unaffected (it re-FITS, which
 writes modern configs).
 
+**Drop the dormant `is_current` column — ADDRESSED 2026-08-27:
+dropped in full (migration aff8f130ae93 + all four code sites; the
+stale README/repo_layout docs in item 3 below remain for the docs
+prose pass). See cleanup_findings.md, calibration.py entry.
+Original item kept for history:** History: `is_current` + a partial
+unique index originally enforced one calibration-of-record per
+(run_pixel, type), with demotion on every store. The 2026-08-20
+label ruling replaced that model entirely (identity = trap output +
+type + label; labels never interact; NO calibration-of-record). The
+acutely-broken part was the INDEX (UniqueViolation from
+insert-before-delete flush ordering), so the minimal mid-campaign
+fix dropped only the index (migration 6ed9910381f5) and declared
+the column dormant — calibrate.py writes True unconditionally, so
+every row is True and the column carries no meaning. Removal was
+DEFERRED (live-DB ALTER + touching readers during the freeze), not
+rejected. Verified live usage as of 2026-08-26 (re-grep before
+acting — this list goes stale):
+
+1. `calibrationnet/queries.py` — one function still exposes a
+   `current_only` parameter filtering `.where(Calibration.
+   is_current)` (a no-op today; dead semantics as API). The earlier
+   "current_only removed" sweep missed it.
+2. `scripts/low_gain_report.py` (~line 88-91) — REAL WART, fix
+   regardless of the column: selects a Calibration by
+   trap_filter_output_id + is_current and takes `.first()` with NO
+   label or type filter. Under the label scheme a trap output holds
+   jin2026a linear + quadratic + jin2026a-ce-only rows, all True, so
+   `cal_gain` comes from an arbitrary row. Filter explicitly by
+   (label='jin2026a', calibration_type='linear').
+3. Stale docs describing the OLD semantics as live: README (two
+   spots: "unique index guarantees at most one is_current", the
+   `--no-current` mention) and docs/repo_layout.md ("is_current per
+   (run_pixel, type) lands on..."). docs/pipeline_roadmap.md also
+   mentions it but is historical — leave it. Fix in the docs prose
+   pass at the latest.
+
+RECOMMENDED: drop the column properly — one drop-column migration on
+a QUIET database (lesson: DDL hangs behind open fitter
+transactions), remove the model field + the `current_only` parameter
+(re-grep callers first), fix low_gain_report per (2), update the
+docs per (3), and delete the `is_current=True` line in calibrate.py.
+Keeping it dormant instead is acceptable but still requires (1)-(3),
+so dropping costs only the migration on top. A public repo with an
+always-true "meaningless" column invites confusion (this item exists
+because AS had to ask what it was for).
+
 **Linter/formatter decision (after cleanup, before public release).**
 The repo has no linter configured. Decide whether to add one (e.g.
 Ruff for lint, optionally Black for formatting) with a config checked
@@ -188,8 +234,8 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/__init__.py` | (nothing imports it — leaf) | schema | x |
 | `calibrationnet/models/adc_peak.py` | calibrationnet/models/calibration.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py | schema | x |
 | `calibrationnet/models/base.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_pixel.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/spectrum_fit.py, calibrationnet/models/trap_filter_output.py | schema | x |
-| `calibrationnet/models/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | schema |   |
-| `calibrationnet/models/covariance.py` | calibrationnet/models/calibration.py, calibrationnet/models/spectrum_fit.py | schema |   |
+| `calibrationnet/models/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | schema | x |
+| `calibrationnet/models/covariance.py` | calibrationnet/models/calibration.py, calibrationnet/models/spectrum_fit.py | schema | x |
 | `calibrationnet/models/pixel.py` | calibrationnet/models/run_pixel.py, scripts/optimal_positions.py | schema | x |
 | `calibrationnet/models/run.py` | calibrationnet/models/run_segment.py | schema | x |
 | `calibrationnet/models/run_pixel.py` | calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py | schema | x |
