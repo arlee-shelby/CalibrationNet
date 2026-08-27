@@ -24,7 +24,7 @@ class Run(Base):
 
     # units and sign conventions:
     # biases in volts (generally negative, e.g. -300); hv in kilovolts (generally negative,
-    # e.g. -27); main/udet magnet currents in amps; exb in volts; temperatures in kelvin; leakage currents in micro amps
+    # e.g. -27); main/udet magnet currents in amps; exb in volts; temperatures in kelvin
     udet_bias: Mapped[Optional[float]]
     ldet_bias: Mapped[Optional[float]]
     hv: Mapped[Optional[float]]
@@ -44,6 +44,8 @@ class Run(Base):
     ldet_armor: Mapped[Optional[float]]
     udet_ring: Mapped[Optional[float]]
     ldet_ring: Mapped[Optional[float]]
+    
+    # leakage currents in micro amps
     udet_leakage: Mapped[Optional[float]]
     ldet_leakage: Mapped[Optional[float]]
 

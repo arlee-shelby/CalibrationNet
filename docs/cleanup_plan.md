@@ -250,7 +250,7 @@ Why: (a) one place to maintain; (b) AS may scrub the git history
 before release, and files already stripped during cleanup stay
 untouched by that scrub. Apply while cleaning each file from
 2026-08-27 on; already-known sites: calibrationnet/acquisition/
-slow_controls.py (docstring + error hint) and motion_control.py
+slow_controls.py (docstring + error hint) and epics_controls.py
 (error hint); README/docs get theirs in the prose pass. Personal
 usernames and user-specific paths (ashelby*, /pscratch/sd/a/
 ashelby/...) are genericized wherever encountered. NOTE: changing an
@@ -336,7 +336,7 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine | x |
 | `calibrationnet/acquisition/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine |   |
 | `calibrationnet/acquisition/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine |   |
-| `calibrationnet/acquisition/motion_control.py` | calibrationnet/acquisition/ingest.py | engine |   |
+| `calibrationnet/acquisition/epics_controls.py` | calibrationnet/acquisition/ingest.py | engine | x |
 | `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/ingest.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine |   |
 | `calibrationnet/acquisition/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine |   |

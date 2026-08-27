@@ -28,7 +28,7 @@ instrument-table-era runs (through 8865) store it negative; exactly
 the 4 archive-era runs — 9464, 9469, 9470, 9521 — store hv ≈ +27.04.
 
 **Cause:** the motion-control archive path (SETTINGS_CHANNELS in
-calibrationnet/acquisition/motion_control.py) stored hv WITHOUT the sign
+calibrationnet/acquisition/epics_controls.py) stored hv WITHOUT the sign
 flip — the archive readback BL13:Nab:UDETHV:voltage reports +27 kV
 for a physical -27 kV — silently re-introducing the sign mistake that
 was corrected across the runs table on 2026-07-30. The
@@ -40,7 +40,7 @@ BL13:Nab:*DETBias:SourceVoltage reports negative natively; verified
 **Ruling (AS, 2026-08-24):** restore the uniform physical convention
 (hv negative) everywhere rather than documenting a mixed convention.
 
-- Code: motion_control.py hv transform `v / 1000.0` -> `-v / 1000.0`,
+- Code: epics_controls.py hv transform `v / 1000.0` -> `-v / 1000.0`,
   plus a comment noting the readback polarity so this cannot regress.
 - Data: one-time UPDATE of the 4 positive rows to -hv.
 - No calibration is affected: the only sign-sensitive consumer,
@@ -51,7 +51,7 @@ BL13:Nab:*DETBias:SourceVoltage reports negative natively; verified
   data agree.
 
 **Verification (all passed 2026-08-24):** `py_compile`
-motion_control.py OK; `benchmark_fits.py --check-only` — reference
+epics_controls.py OK; `benchmark_fits.py --check-only` — reference
 md5 matches, all 7 frozen functions identical, changeable functions
 no differences; sign distribution after the UPDATE: 110 negative /
 0 positive / 14 zero (was 106/4/14). Own commit (development-style
@@ -60,7 +60,7 @@ message, not `cleanup:`), separate from the run.py comment cleanup.
 **Follow-up unlocked:** once applied, the "(physical signs as of
 2026-07-30)" datestamp in run.py's units comment can be dropped — the
 convention is uniformly true again and the correction's history lives
-in the motion_control.py comment.
+in the epics_controls.py comment.
 
 ---
 
@@ -298,14 +298,88 @@ py_compile, imports, benchmark_fits --check-only all green; trailing
 whitespace stripped.
 
 Knowledge relocation note: the old query comment's pointer "(see
-motion_control.SETTINGS_CHANNELS), which also finally provides
+epics_controls.SETTINGS_CHANNELS), which also finally provides
 ldet_ring" was dropped — that fact (the instrument tables never
 provided ldet_ring, which is why the query selects udet_ring only)
-now lives only in motion_control.py's SETTINGS_CHANNELS table.
-Re-check when cleaning motion_control.py.
+now lives only in epics_controls.py's SETTINGS_CHANNELS table.
+Re-check when cleaning epics_controls.py.
 
 Cross-references recorded: this file points at
 scripts/with_sc_tunnel.sh (module docstring + error hint) and
 .env.example (module docstring + get_sc_engine error) — re-check
 those mentions if either file is renamed/restructured during its own
 cleanup.
+
+---
+
+## calibrationnet/acquisition/motion_control.py → epics_controls.py — 2026-08-27 — done (rename only; content cleanup separate)
+
+### Module renamed (behavior-neutral, applied repo-wide)
+
+**Decision (AS, 2026-08-27):** since 2026-07-21 the module reads much
+more than the RSIS motion control — the run-level settings
+(SETTINGS_CHANNELS: biases, HV, temperatures, leakage) also live in
+the Test archive it queries. The archive holds EPICS channels, and
+the folder convention names modules after the external system they
+read (cf. slow_controls.py), so: epics_controls.py.
+
+**Scope applied:** `git mv`; the one importer
+(calibrationnet/acquisition/ingest.py — import line + a docstring
+mention of MIN_DWELL); docstring/doc path mentions in
+calibrationnet/positions.py, README.md:157, docs/cleanup_plan.md
+(identifiers ruling + inventory row), docs/cleanup_findings.md (all
+entries), docs/python_notes.md. Function names and the
+POSITIONS_DATABASE_URL env var unchanged (env-var rename would be a
+behavior change). Historical docs (development_plan.md,
+pipeline_roadmap.md) untouched as always.
+
+**Verified 2026-08-27:** repo-wide grep zero remaining motion_control
+references outside historical docs; py_compile clean repo-wide;
+epics_controls + ingest import cleanly; benchmark_fits --check-only
+integrity OK.
+
+---
+
+## calibrationnet/acquisition/epics_controls.py — 2026-08-27 — done
+
+### Content cleanup (follows the same-day rename from motion_control.py)
+
+**Behavior changes, both sanctioned/recorded:**
+- Tunnel error hint no longer spells out the ssh command; points at
+  scripts/with_sc_tunnel.sh (Infrastructure identifiers ruling).
+- `position_at()` DELETED as dead code: repo-wide grep (code, docs,
+  notebooks) found zero callers; git log shows it appeared in exactly
+  one commit (966e737, its introduction) and was never referenced
+  since. Its `Optional` import removed with it. Trivially
+  recreatable from _LAST_BEFORE_QUERY if ever wanted.
+
+**Behavior-neutral renames (applied consistently, zero external
+users of old names):** fetch_position_samples ->
+fetch_position_entries (public; only caller is dwell_periods in the
+same module), _step_series -> _merge_position_entries, _SAMPLES_QUERY
+-> _ENTRIES_QUERY, plus local variable renames.
+
+**Date disambiguation established during review (two events, three
+days apart — settings vs positions):** run SETTINGS moved to the Test
+archive 2026-07-21 (instrument tables stop; SETTINGS_CHANNELS
+comment, slow_controls.py comment); POSITION archiving + the
+inches-2026 convention start 2026-07-24 (INCHES_2026_START,
+positions.py). Both files now use the right date for the right event.
+
+**Knowledge relocated/accepted losses from the old SETTINGS_CHANNELS
+comment (all durably recorded elsewhere):** the sign-mistake history
+(+300/+27 corrected across the runs table 2026-07-30; hv transform
+negation fixed 2026-08-24 after runs 9464-9521 briefly stored +27) —
+see this file's run.py entry above; the LDET leakage magnitudes
+anecdote (~36 uA before 2026-07-21, ~0.06 uA after — the reason
+leakage stays in MICROAMPS, the legacy Keithley unit). Also dropped
+from the constants' comments, preserved here: POSITION_TOLERANCE's
+0.02" is safe because readback jitter is thousandths of an inch
+(kept in code) AND scan steps are ~0.2" (dropped — the upper bound);
+MIN_DWELL's 5 min is safe because stage moves take seconds to a
+couple of minutes (dropped — the lower bound) while standard dwells
+are ~30 min.
+
+**Verified:** py_compile, module + ingest imports, benchmark_fits
+--check-only all green; trailing whitespace stripped (12 lines);
+zero old-name leftovers repo-wide.

@@ -507,7 +507,7 @@ meant to exist once per process, not per query. The lru_cache idiom
 gives one engine per process while staying lazy — importing the module
 touches nothing (no env var needed, no network); the engine is built,
 and the "SC_DATABASE_URL is not set" error can fire, only on first
-real use. Same idiom in slow_controls.py and motion_control.py.
+real use. Same idiom in slow_controls.py and epics_controls.py.
 
 ## Regex anatomy: `re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", s, re.I)`
 

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Run, RunSegment
 from ..positions import INCHES_2026, convention_for_date
-from .motion_control import dwell_periods, fetch_settings
+from .epics_controls import dwell_periods, fetch_settings
 from .slow_controls import fetch_run
 
 # Everything fetch_run returns whose key matches a Run column gets stored;
@@ -17,7 +17,7 @@ _RUN_COLUMNS = {c.name for c in Run.__table__.columns} - {"run_number"}
 def ingest_run(session: Session, run_number: int, min_dwell=None) -> Run:
     """Create (or refresh) the Run row and its segments from slow controls.
 
-    min_dwell (timedelta, default motion_control.MIN_DWELL = 5 min) is
+    min_dwell (timedelta, default epics_controls.MIN_DWELL = 5 min) is
     the shortest stationary stretch that counts as a dwell segment —
     lower it for runs whose grid dwells are themselves ~5 minutes (e.g.
     run 9402), where the default would sit exactly on the boundary and

@@ -154,7 +154,7 @@ was recorded in, so every segment stores its `position_convention`
 - **`inches-2026`** (from 2026-07-24) — positions come from the
   motion-control archive (`BL13:Nab:RSIS:leftRightMPOS:MPOS` and
   `:downUpstreamMPOS:MPOS` in the `Test` database, read by
-  `calibrationnet/acquisition/motion_control.py`, which also derives the
+  `calibrationnet/acquisition/epics_controls.py`, which also derives the
   dwell periods that become segments). BOTH axes are inches, and the stage
   was re-homed so the centered position now reads 0 horizontally.
 
