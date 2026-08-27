@@ -55,7 +55,15 @@ change and follows the escape hatch below.
      or the script's own cheapest invocation).
    - **schema** (models/): comments/docstrings ONLY — any column or
      constraint change is a migration, i.e. development, not cleanup.
-5. Tick the file off below (edit this document), commit with a
+5. CROSS-REFERENCE check (added 2026-08-27): before ticking, note any
+   reference from the edited file to a file NOT yet cleaned (README,
+   docs/*, other modules — e.g. "see README section X"). Record the
+   dependency in the file's cleanup_findings.md entry, so when the
+   referenced file is later edited, every recorded referrer gets
+   re-checked (does the section still exist? same name? same
+   content?). Same in reverse: when cleaning a file, grep for who
+   references IT and re-check those mentions.
+6. Tick the file off below (edit this document), commit with a
    `cleanup:` prefixed message, move on.
 
 ## Hard rules
@@ -240,7 +248,7 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/run.py` | calibrationnet/models/run_segment.py | schema | x |
 | `calibrationnet/models/run_pixel.py` | calibrationnet/models/calibration.py, calibrationnet/models/pixel.py, calibrationnet/models/run.py, calibrationnet/models/run_segment.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/run_segment.py` | calibrationnet/models/run.py, calibrationnet/models/run_pixel.py | schema | x |
-| `calibrationnet/models/source.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py | schema |   |
+| `calibrationnet/models/source.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py | schema | x |
 | `calibrationnet/models/spectrum_fit.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/trap_filter_output.py` | calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py, calibrationnet/models/spectrum_fit.py | schema | x |
 

@@ -13,18 +13,20 @@ if TYPE_CHECKING:
 
 
 class Isotope(Base):
-    """An isotope used for calibration (e.g. 207Bi, 113Sn). The peaks it
-    produces are physics of the isotope, so they hang here; the physical
-    sources of this isotope are Source rows."""
+    """An isotope used for calibration (ex: Bi-207, Sn-113). The peaks it
+    produces are physics of the isotope. The physical
+    sources of this isotope are Source rows.
+
+    This class is grouped with the others in this file as they are all directly related
+    to source specific information.
+    """
 
     __tablename__ = "isotopes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(20), unique=True)  # e.g. "207Bi"
+    name: Mapped[str] = mapped_column(String(20), unique=True)  # ex: "Bi-207"
 
-    decay_energies: Mapped[List["IsotopeDecayEnergy"]] = relationship(
-        back_populates="isotope", cascade="all, delete-orphan"
-    )
+    decay_energies: Mapped[List["IsotopeDecayEnergy"]] = relationship(back_populates="isotope", cascade="all, delete-orphan")
     sources: Mapped[List["Source"]] = relationship(back_populates="isotope")
 
     def __repr__(self) -> str:
@@ -32,64 +34,67 @@ class Isotope(Base):
 
 
 class Source(Base):
-    """A specific physical calibration source: one manufactured item with
-    its manufacturer id number. There can be many sources of the same
-    isotope, and simulation-updated known energies are specific to one
-    physical source, so runs record which actual source sat over which
-    pixel."""
+    """A specific physical calibration source, i.e. the manufactured item
+    from EzIsotope. The "label" and "serial_number" store the identifying information as recorded
+    in the source control application. There can be many sources of the same isotope, and
+    simulation-updated known energies are specific to one physical source because each physical source
+    can have different Mylar, aluminum, and carrier thicknesses, i.e. different loss corrections. So, runs
+    attempt to record which actual source sat over which pixel (see assign_sources.py for details).
+
+    This class is grouped with the others in this file as they are all directly related
+    to source specific information.
+    """
 
     __tablename__ = "sources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    isotope_id: Mapped[int] = mapped_column(
-        ForeignKey("isotopes.id"), index=True
-    )
-    label: Mapped[str] = mapped_column(String(50), unique=True)  # e.g. "Bi-207-9176"
-    serial_number: Mapped[str] = mapped_column(String(50), unique=True)  # e.g. "Y2-743"
+    isotope_id: Mapped[int] = mapped_column(ForeignKey("isotopes.id"), index=True)
+
+    # the label plus serial number specify the identification properties of one physical
+    # source, as reported in the source control application
+    label: Mapped[str] = mapped_column(String(50), unique=True)
+    serial_number: Mapped[str] = mapped_column(String(50), unique=True)
+
     notes: Mapped[Optional[str]]
 
     isotope: Mapped["Isotope"] = relationship(back_populates="sources")
-    run_pixels: Mapped[List["RunPixel"]] = relationship(
-        back_populates="source"
-    )
-    kev_peaks: Mapped[List["KeVPeak"]] = relationship(
-        back_populates="source"
-    )
-    installations: Mapped[List["SourceInstallation"]] = relationship(
-        back_populates="source", cascade="all, delete-orphan"
-    )
+    run_pixels: Mapped[List["RunPixel"]] = relationship(back_populates="source")
+    kev_peaks: Mapped[List["KeVPeak"]] = relationship(back_populates="source")
+    installations: Mapped[List["SourceInstallation"]] = relationship(back_populates="source", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"Source({self.label}, serial={self.serial_number})"
 
 
 class SourceInstallation(Base):
-    """One source mounted in the source frame for an installation period
-    (from the Source Installation History slides). removed_on is NULL for
+    """Each row of this table is one source mounted in the source frame for a
+    specific installation. The "removed_on" column is NULL for
     the current installation.
 
-    Slot convention (see README "Source frame slot convention"): labels
-    are "R<row>C<col>" in the frame's Facing UP orientation — the view
-    from the upper detector with the handle at the bottom — rows numbered
-    from 1 at the top (farthest from the handle), columns from 1 at the
-    left. The rule generalizes to any holder shape (a single vertical
-    stick is R1C1, R2C1, ...). The lower detector sees this mirrored
-    left-right, like everything else."""
+    The slot convention (see README "Source frame slot convention") uses labels
+    "R<row>C<col>" in the frame's Facing UP orientation, i.e. the view
+    from the upper detector with the handle at the bottom (which comes from the convention used
+    in the elog for source installations starting from 10/2025 to present). Rows are numbered
+    from 1 at the top (farthest from the handle) and columns from 1 at the left. The rule generalizes
+    to any holder shape (a single vertical stick is R1C1, R2C1, ...). The lower detector sees this mirrored
+    left-right.
+
+    This class is grouped with the others in this file as they are all directly related
+    to source specific information.
+    """
 
     __tablename__ = "source_installations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source_id: Mapped[int] = mapped_column(
-        ForeignKey("sources.id"), index=True
-    )
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), index=True)
     installed_on: Mapped[date]
-    removed_on: Mapped[Optional[date]]  # NULL = still installed
+    removed_on: Mapped[Optional[date]]
     slot: Mapped[str] = mapped_column(String(20))
-    # Which physical tray was mounted: "3-slot", "5-slot", "6-slot". The
-    # spacing between slots is a property of the tray (the 6-slot one is
-    # ~0.15 inch longer), so source assignment keys its frame geometry on
-    # this, not on the date — a tray can be removed and re-installed later
-    # and should reuse the geometry already measured for it.
+
+    # the physical tray that the sources were installed with, i.e. "3-slot", "5-slot", "6-slot"
+    # the spacing between slots is a property of the tray (the 6-slot one is
+    # ~0.15 inch longer) and the source assignment uses the frame geometry to predict which source
+    # sat on a particular pixel
     holder: Mapped[Optional[str]] = mapped_column(String(20))
     notes: Mapped[Optional[str]]
 
@@ -103,37 +108,31 @@ class SourceInstallation(Base):
 
 
 class IsotopeDecayEnergy(Base):
-    """One energy line an isotope's decay produces (e.g. 207Bi CE-K 976).
-    How many lines varies by isotope. This is the line's IDENTITY only —
-    the keV values we believe for it live in KeVPeak, which is versioned
-    and may be specific to a physical source."""
+    """One energy line an isotope's decay produces (ex: Bi-207 CE-K 976).
+    This is the line's reference only — the exact keV values used for calibrations
+    live in KeVPeak table, which is versioned and may be specific to a physical source.
+
+    This class is grouped with the others in this file as they are all directly related
+    to source specific information.
+    """
 
     __tablename__ = "isotope_decay_energies"
     __table_args__ = (UniqueConstraint("isotope_id", "label"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    isotope_id: Mapped[int] = mapped_column(
-        ForeignKey("isotopes.id"), index=True
-    )
+    isotope_id: Mapped[int] = mapped_column(ForeignKey("isotopes.id"), index=True)
     label: Mapped[str] = mapped_column(String(50))  # e.g. "CE 976"
 
-    # NNDC emission intensity in percent — a stable property of the line
-    # (unlike keV values, which are versioned in kev_peaks), used to
-    # pick matching anchors and predict which lines low-statistics
-    # pixels can see. NULL when not reported (e.g. the Bi-207 Auger
-    # lines: NNDC gives only a combined 2.9% for the whole Auger group).
+    # intensity is copied from the nndc reported values (in percent), which is a "stable" property
+    # of the line because the simulated values have not yet been included (and are
+    # unlikely to be)
+    # used in part to predict which lines have too low-statistics to be fit
     intensity: Mapped[Optional[float]]
     intensity_error: Mapped[Optional[float]]
 
-    isotope: Mapped["Isotope"] = relationship(
-        back_populates="decay_energies"
-    )
-    kev_peaks: Mapped[List["KeVPeak"]] = relationship(
-        back_populates="isotope_decay_energy", cascade="all, delete-orphan"
-    )
-    adc_peaks: Mapped[List["ADCPeak"]] = relationship(
-        back_populates="isotope_decay_energy"
-    )
+    isotope: Mapped["Isotope"] = relationship(back_populates="decay_energies")
+    kev_peaks: Mapped[List["KeVPeak"]] = relationship(back_populates="isotope_decay_energy", cascade="all, delete-orphan")
+    adc_peaks: Mapped[List["ADCPeak"]] = relationship(back_populates="isotope_decay_energy")
 
     def __repr__(self) -> str:
         return (f"IsotopeDecayEnergy(isotope_id={self.isotope_id}, "
@@ -142,48 +141,41 @@ class IsotopeDecayEnergy(Base):
 
 class KeVPeak(Base):
     """A "known" energy value, in keV, for one isotope decay line — the
-    keV side of a calibration point. NNDC/literature values apply to the
-    isotope in general (source_id NULL); corrected values from simulation
-    are specific to one physical source (source_id set). Old rows are
-    never overwritten — new values are new rows — and each calibration
-    records (via CalibrationPoint) exactly which keV rows it used, so any
-    past calibration stays reproducible."""
+    keV side of a calibration point. The nndc/literature values are applied to the
+    isotope by default, but the corrected values, from simulation,
+    can be specific to one physical source. Old rows are
+    never overwritten and new values are new rows. Each calibration
+    records exactly which keV rows it used, so any past calibration can be reproduced.
+
+    This class is grouped with the others in this file as they are all directly related
+    to source specific information.
+    """
 
     __tablename__ = "kev_peaks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    isotope_decay_energy_id: Mapped[int] = mapped_column(
-        ForeignKey("isotope_decay_energies.id"), index=True
-    )
-    # NULL = generic literature value; set = specific to that physical source.
-    source_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("sources.id"), index=True
-    )
-    # Simulation values can also be DETECTOR-dependent (AS design ruling
-    # 2026-08-14: the Jin-2026a set is per detector, source-independent;
-    # source-DEPENDENT sets are still coming and use source_id as ever)
-    # and depend on the HV they were simulated at. NULL = not
-    # detector-/HV-specific (e.g. every NNDC row). hv_kv is the HV
-    # MAGNITUDE in kV (readback convention: reported +27 means -27 kV).
-    detector: Mapped[Optional[str]] = mapped_column(String(10))  # upper|lower
+    isotope_decay_energy_id: Mapped[int] = mapped_column(ForeignKey("isotope_decay_energies.id"), index=True)
+
+    # source_id specifies a specific physical source, if NULL = generic literature value (nndc)
+    source_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sources.id"), index=True)
+
+    # simulated keV values can be detector-dependent (i.e. in the NabSim)
+    # specified as upper or lower
+    detector: Mapped[Optional[str]] = mapped_column(String(10))
+
+    # simulated keV values can be HV dependent (i.e. in the NabSim)
     hv_kv: Mapped[Optional[int]]
 
     energy_kev: Mapped[float]
     energy_error_kev: Mapped[Optional[float]]
     origin: Mapped[str] = mapped_column(String(20))  # "nndc" | "simulation"
-    version: Mapped[Optional[str]] = mapped_column(String(50))  # e.g. "Jin-2026a"
+    version: Mapped[Optional[str]] = mapped_column(String(50))  # ex: "Jin-2026a"
     notes: Mapped[Optional[str]]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    isotope_decay_energy: Mapped["IsotopeDecayEnergy"] = relationship(
-        back_populates="kev_peaks"
-    )
-    source: Mapped[Optional["Source"]] = relationship(
-        back_populates="kev_peaks"
-    )
-    calibration_points: Mapped[List["CalibrationPoint"]] = relationship(
-        back_populates="kev_peak"
-    )
+    isotope_decay_energy: Mapped["IsotopeDecayEnergy"] = relationship(back_populates="kev_peaks")
+    source: Mapped[Optional["Source"]] = relationship(back_populates="kev_peaks")
+    calibration_points: Mapped[List["CalibrationPoint"]] = relationship(back_populates="kev_peak")
 
     def __repr__(self) -> str:
         return (

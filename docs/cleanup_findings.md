@@ -174,3 +174,25 @@ column, not a missing one):
 Verification: py_compile all four; benchmark_fits --check-only;
 low_gain_report smoke run before AND after the migration; column
 absence confirmed via information_schema.
+
+---
+
+## calibrationnet/models/source.py — 2026-08-27 — done (README cross-ref below stays pending)
+
+New lore added during cleanup: EzIsotope provenance; why simulation
+corrections are per-source (Mylar/aluminum/carrier thicknesses = loss
+corrections); elog slot-convention provenance (10/2025-present).
+Knowledge-loss checks: the hv_kv magnitude convention (readback +27 =
+-27 kV) was dropped from the model comment by AS ruling — it lives
+durably in seed_decay_energies.py (writer) and calibrate.py (reader).
+The Source Installation History slides provenance lives in
+seed_source_installations.py.
+
+### Cross-reference dependency: README slot convention
+
+SourceInstallation's docstring points to README "Source frame slot
+convention" for the R<row>C<col> / Facing UP orientation rules. The
+README has NOT been cleaned yet — when it is (docs prose pass at the
+latest), re-check this docstring: section still exists, same name,
+conventions unchanged. (This entry prompted the general
+cross-reference rule now in cleanup_plan.md, per-file loop step 5.)
