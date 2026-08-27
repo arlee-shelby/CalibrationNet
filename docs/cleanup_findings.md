@@ -265,3 +265,47 @@ docstring (a durable lore home) is location-agnostic — unchanged.
 import cleanly (field_key resolves); `benchmark_fits.py
 --check-only` integrity OK; grep shows zero remaining
 `acquisition[./]source_assignment` references.
+
+---
+
+## calibrationnet/acquisition/slow_controls.py — 2026-08-27 — done
+
+### `number_subruns = lastsubrun + 1` premise VERIFIED (known item, closed)
+
+The run-ingestion query stores `lastsubrun + 1 AS number_subruns` on
+the premise that runlog.status's lastsubrun is 0-indexed. Verified
+2026-08-27 against the raw archive on GT
+(/storage/ideas/is-ajezghani3-0/TempCal): run 8622 has 34
+Run8622_*.h5 files with subrun indices 0..33; the DB stores
+number_subruns = 34 and slow controls therefore reported
+lastsubrun = 33. Count == max index + 1 with a 0 minimum confirms
+0-indexing directly. The query and its line comment are correct —
+no change needed.
+
+### Cleanup review (file done 2026-08-27)
+
+Docstrings/comments rewritten by AS; verified behavior-neutral except
+one sanctioned output change: the tunnel error hint no longer spells
+out the ssh command (hosts + service account) and instead points at
+scripts/with_sc_tunnel.sh — per the "Infrastructure identifiers"
+ruling in cleanup_plan.md. The example SC_DATABASE_URL (with the real
+DB account name) left the module docstring; .env.example is the
+canonical home for the URL shape.
+
+Local renames lin->linear, horiz->horizontal, lone->lone_linear;
+Style B re.search collapsed to one line (formatting only). Verified:
+py_compile, imports, benchmark_fits --check-only all green; trailing
+whitespace stripped.
+
+Knowledge relocation note: the old query comment's pointer "(see
+motion_control.SETTINGS_CHANNELS), which also finally provides
+ldet_ring" was dropped — that fact (the instrument tables never
+provided ldet_ring, which is why the query selects udet_ring only)
+now lives only in motion_control.py's SETTINGS_CHANNELS table.
+Re-check when cleaning motion_control.py.
+
+Cross-references recorded: this file points at
+scripts/with_sc_tunnel.sh (module docstring + error hint) and
+.env.example (module docstring + get_sc_engine error) — re-check
+those mentions if either file is renamed/restructured during its own
+cleanup.

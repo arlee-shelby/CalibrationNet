@@ -235,6 +235,42 @@ Long lines are fine and are not to be flagged in diff reviews; the
 79/88-character question is deferred entirely to the linter decision
 below, after cleanup.
 
+**Infrastructure identifiers (AS ruling 2026-08-27): minimize where
+they appear.** No secrets live in the repo (.env is gitignored,
+.env.example is all placeholders), and hostnames are not credentials
+— but for public release the concrete identifiers (bl13-replay.
+sns.gov, the analysis.sns.gov jump host, and especially the
+`nabreplay` service-account name) should appear in as FEW files as
+possible. Canonical in-repo home: the header comment of
+scripts/with_sc_tunnel.sh (whose mechanics are already host-agnostic
+— SSH alias + env overrides), duplicated on the Nab wiki. Everywhere
+else — module docstrings, error hints — point at
+scripts/with_sc_tunnel.sh instead of spelling out the ssh command.
+Why: (a) one place to maintain; (b) AS may scrub the git history
+before release, and files already stripped during cleanup stay
+untouched by that scrub. Apply while cleaning each file from
+2026-08-27 on; already-known sites: calibrationnet/acquisition/
+slow_controls.py (docstring + error hint) and motion_control.py
+(error hint); README/docs get theirs in the prose pass. Personal
+usernames and user-specific paths (ashelby*, /pscratch/sd/a/
+ashelby/...) are genericized wherever encountered. NOTE: changing an
+error-message string is an OUTPUT change, i.e. not strictly
+behavior-neutral — each such edit gets a line in the file's
+cleanup_findings.md entry (trivially safe, but recorded). Before
+release: ask the Nab/ORNL contact whether publishing the tunnel
+recipe (nabreplay in particular) even in the one canonical file is
+acceptable, and decide the git-history question (scrub vs squash vs
+leave) explicitly.
+
+**Trailing whitespace (AS ruling 2026-08-27): ALWAYS removed.**
+Unlike line length, trailing whitespace on any line of a cleaned
+file is fixed as part of cleaning it (it is invisible in editors,
+churns future diffs, and any later formatter would strip it anyway).
+The assistant checks for it in every diff review
+(`grep -n '[[:space:]]$' <file>`) — a stray trailing space never
+blocks a tick, it just gets removed. FROZEN files excepted, as
+always.
+
 **Linter/formatter decision (after cleanup, before public release).**
 The repo has no linter configured. Decide whether to add one (e.g.
 Ruff for lint, optionally Black for formatting) with a config checked
@@ -246,7 +282,11 @@ that the two FROZEN fit_functions files must be EXCLUDED from any
 auto-formatting (md5-checked byte-identical). See docs/python_notes.md
 "Linters" for what these tools do.
 
-**`number_subruns` = lastsubrun + 1 (check when cleaning
+**`number_subruns` = lastsubrun + 1 — ADDRESSED 2026-08-27: premise
+verified against the raw archive (run 8622: 34 files, indices 0..33,
+stored number_subruns 34 — lastsubrun IS 0-indexed; see
+cleanup_findings.md, slow_controls.py entry). No change needed.
+Original item kept for history: (check when cleaning
 calibrationnet/acquisition/slow_controls.py).** The run-ingestion query
 stores `lastsubrun + 1 AS number_subruns` on the premise that
 lastsubrun is 0-indexed. Verify the premise when cleaning that file —
@@ -293,11 +333,11 @@ and confirm the count equals the stored number_subruns.
 
 | file | imported/used by | risk class | done |
 |---|---|---|---|
-| `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine |   |
+| `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine | x |
 | `calibrationnet/acquisition/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine |   |
 | `calibrationnet/acquisition/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine |   |
 | `calibrationnet/acquisition/motion_control.py` | calibrationnet/acquisition/ingest.py | engine |   |
-| `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/ingest.py, scripts/offline/export_segments.py | engine |   |
+| `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/ingest.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine |   |
 | `calibrationnet/acquisition/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine |   |
 | `calibrationnet/acquisition/wiring.py` | scripts/seed_pixels.py | engine |   |

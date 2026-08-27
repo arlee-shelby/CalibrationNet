@@ -1,14 +1,11 @@
-"""Read-only access to the Nab slow-controls database.
+"""Pull run metadata from the slow-controls database (read only access). Note,
+for runs before 2026-07-24, the source position is parsed out of the run description notes.
+After which, it is pulled directly from the RSIS motion control.
 
-The slow-controls Postgres runs on bl13-replay.sns.gov and is only
-reachable through an SSH tunnel (jump host analysis.sns.gov). This module
-does NOT manage the tunnel — open it first (scripts/with_sc_tunnel.sh
+The slow-controls database is only reachable through an SSH tunnel. This module
+does not manage the tunnel — open it first (scripts/with_sc_tunnel.sh
 does this for you), then everything here talks to the forwarded local
-port.
-
-Connection URL comes from SC_DATABASE_URL in the environment or .env:
-
-    SC_DATABASE_URL=postgresql+psycopg://readonly:<password>@127.0.0.1:15432/Nab_SlowControl
+port. Connection URL comes from SC_DATABASE_URL in the environment or .env file (see .env.example).
 """
 
 import os
@@ -34,15 +31,12 @@ def get_sc_engine():
     return create_engine(url)
 
 
-# One query for everything we store about a run: timing from runlog.status
-# plus each setting averaged (leakage: max'd) over the run's time window
-# from the instrument table that records it. Adapted from the Grafana
-# run-metadata dashboard's query.
+# one query for everything stored in this database for a run (adapted from the grafana dashboard query)
+# each setting is averaged over the run window, except leakage current (which
+# is taken to be the max value) (this is the same convention as grafana) and start/end times
 #
-# These instrument tables stopped being populated around 2026-07-21: newer
-# runs get these settings from the Test archive instead (see
-# motion_control.SETTINGS_CHANNELS), which also finally provides
-# ldet_ring. Positions live on run_segments, not here.
+# these instrument tables stopped being populated around 2026-07-21, newer
+# runs get these settings from the Test database instead
 _RUN_QUERY = text(
     """
     WITH rundata AS (
@@ -119,13 +113,12 @@ _RUN_QUERY = text(
 
 
 def fetch_run(run_number: int) -> Optional[dict]:
-    """Pull everything we store about one run from slow controls, in a
-    single query: start/end times plus the detector/beamline settings
-    averaged over the run's time window.
+    """Pull all the metadata for a run to be stored from the slow-control database
+    using one query. Note, most settings are averaged over the run period, except start/end times
+    and leakage current (which is taken to be the max value).
 
     Keys that match Run column names (start_time, end_time, number_subruns,
-    udet_bias, …) are stored by ingest; the rest (rundescription, errorcode)
-    ride along for callers that want them. A setting whose instrument has
+    udet_bias, ...) are stored by ingest. A setting whose instrument has
     no samples in the window comes back as None (stored as NULL).
 
     Returns None if the run is not in the slow-controls database. Raises
@@ -142,9 +135,7 @@ def fetch_run(run_number: int) -> Optional[dict]:
     except OperationalError as exc:
         raise RuntimeError(
             "Could not reach the slow-controls database. Is the SSH tunnel "
-            "open? (scripts/with_sc_tunnel.sh, or: ssh -N -J "
-            "<you>@analysis.sns.gov -L 15432:localhost:5432 "
-            "nabreplay@bl13-replay.sns.gov)"
+            "open? (scripts/with_sc_tunnel.sh opens it.)"
         ) from exc
 
     if row is None:
@@ -156,33 +147,33 @@ def fetch_run(run_number: int) -> Optional[dict]:
 
 
 def _parse_positions(description: Optional[str]) -> dict:
-    """Pull source positions out of the free-text run description, e.g.
-    "calibration run, source lin pos: 34.0, 2D: 2.7 units, ...". Returns
-    {} for keys it can't find so ingest just leaves those columns NULL."""
+    """Pull source positions out of the run description (ex:
+    "calibration run, source lin pos: 34.0, 2D: 2.7 units, ..."). This is only necessary for
+    older runs where the RSIS motion control was not recorded. Returns
+    {} for keys it can't find so ingest just leaves those columns NULL. Three general styles
+    were used in 2025 data, so each is used to attempt to find a match and assign a position
+    for that run.
+    """
     if not description:
         return {}
     found = {}
-    # Style A: "source lin pos: 34.0, 2D: 2.7 units"
-    lin = re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-    if lin:
-        found["linear_position"] = float(lin.group(1))
-    horiz = re.search(r"2D:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-    if horiz:
-        found["horizontal_position"] = float(horiz.group(1))
-    # Style B: "position: 34.0,2.7" / "position 34.4/1.7" / "position 33.2 2.7"
+    # style A: "source lin pos: 34.0, 2D: 2.7 units"
+    linear = re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+    if linear:
+        found["linear_position"] = float(linear.group(1))
+    horizontal = re.search(r"2D:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+    if horizontal:
+        found["horizontal_position"] = float(horizontal.group(1))
+    # style B: "position: 34.0,2.7" / "position 34.4/1.7" / "position 33.2 2.7"
     if not found:
-        pair = re.search(
-            r"position:?\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)",
-            description,
-            re.I,
-        )
+        pair = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)",description,re.I)
         if pair:
             found["linear_position"] = float(pair.group(1))
             found["horizontal_position"] = float(pair.group(2))
-    # Mixed style: "position: 35.0 2D 2.2" — 2D matched above but linear
-    # didn't; the number right after "position" is the linear position.
+    # mixed style: "position: 35.0 2D 2.2" — 2D matched above but linear
+    # didn't; the number right after "position" is the linear position
     if "linear_position" not in found:
-        lone = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-        if lone:
-            found["linear_position"] = float(lone.group(1))
+        lone_linear = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+        if lone_linear:
+            found["linear_position"] = float(lone_linear.group(1))
     return found

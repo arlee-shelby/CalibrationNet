@@ -445,3 +445,95 @@ directory elsewhere on `sys.path` can silently merge into a namespace
 package. A regular package (with `__init__.py`) can't be merged into
 and reads as an explicit "this is a package" signal. So: keep them,
 even when empty.
+
+## Module docstrings vs function docstrings (why acquisition/ files
+## have big blocks at the top and models/ files don't)
+
+The triple-quoted block at the top of a file is a MODULE docstring —
+the same construct as a function docstring, one scope up. Python
+stores it as the module's `__doc__`; `help(<module>)` prints it and
+editors show it when hovering the import.
+
+The placement rule: documentation lives at the smallest scope that
+covers everything it applies to. Module docstring = module-wide facts
+(which external system this talks to, required env vars/tunnels, the
+module's method or design). Function docstring = that one function's
+contract (arguments, return, error behavior). Line comment = a single
+line's non-obvious constraint (a unit, a sign convention).
+
+So acquisition/ modules carry big module docstrings because their
+defining facts are module-wide (slow_controls: the tunnel + env var;
+source_assignment: the whole trust-ordering method), AND still have
+per-function docstrings (e.g. fetch_run's None-vs-RuntimeError
+contract). models/ files are one entity each — a class and its
+columns, no procedure — so their documentation naturally sits on the
+class and the individual column lines instead.
+
+## `load_dotenv()` (python-dotenv)
+
+Reads a `.env` file (found by searching the current directory, then
+upward through parents), parses its `KEY=value` lines, and inserts
+each into the process environment (`os.environ`) — SKIPPING any key
+already set, so real environment variables always beat `.env`. That
+default matters on clusters: a job script's explicit `export
+DATABASE_URL=...` can't be hijacked by a stray `.env`.
+
+It sits at module level (a bare call right after the imports) so it
+runs once at import time, populating the environment before any
+function in the module can ask `os.environ.get(...)`. One of the few
+import-time side effects that is conventional. Idempotent and cheap —
+several modules calling it is fine.
+
+It's the bridge that makes the repo's secrets convention work: `.env`
+(gitignored, real passwords) + `.env.example` (committed template) +
+`load_dotenv()` at the top of every module that needs a URL.
+
+## `@lru_cache(maxsize=1)` on an engine getter (decorators + memoization)
+
+Decorator syntax first: `@wrapper` above `def f():` is sugar for
+`f = wrapper(f)` — the function is wrapped by another at definition
+time.
+
+`functools.lru_cache` is a memoizing wrapper: it remembers results
+keyed by the call's arguments, and on a repeat call returns the stored
+result WITHOUT running the body again ("LRU" = it evicts the least-
+recently-used entry when full; `maxsize=1` keeps one). On a
+no-argument function like `get_sc_engine()` this means: first call
+runs the body (create_engine), every later call returns the SAME
+object instantly — a lazy singleton.
+
+Why for DB engines: a SQLAlchemy Engine is a connection POOL + config,
+meant to exist once per process, not per query. The lru_cache idiom
+gives one engine per process while staying lazy — importing the module
+touches nothing (no env var needed, no network); the engine is built,
+and the "SC_DATABASE_URL is not set" error can fire, only on first
+real use. Same idiom in slow_controls.py and motion_control.py.
+
+## Regex anatomy: `re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", s, re.I)`
+
+`re.search` scans the WHOLE string for the first match (re.match would
+only try the start) and returns a match object or None — hence the
+`if lin:` guard after it. `re.I` = `re.IGNORECASE`: letters in the
+pattern match either case ("lin pos", "Lin Pos", "LIN POS"). The `r"..."`
+raw-string prefix keeps backslashes literal so `\s`/`\d` reach the regex
+engine — always use it for patterns.
+
+Pattern pieces: `\s*` any (or no) whitespace; `:?` optional colon;
+`-?\d+(?:\.\d+)?` a number — optional minus, digits, optional decimal
+part. `(...)` is a CAPTURING group, retrieved with `.group(1)`;
+`(?:...)` is NON-capturing — it only groups so a quantifier can apply
+(here `?` making the whole decimal part optional) without claiming a
+group number.
+
+The looseness (case, spacing, optional colon) is deliberate: the run
+descriptions are hand-typed at the DAQ, and each tolerance matches a
+variant someone actually wrote.
+
+## Trailing commas in multi-line calls
+
+`f(a, b, c,)` — the comma after the last argument is legal and changes
+nothing. Convention: in a call (or list/dict) broken across lines with
+one item per line, EVERY line ends with a comma, the last included —
+future additions/reorderings then touch only their own line in the
+diff, and no line is a special case. Single-line calls take no
+trailing comma. Black/Ruff enforce exactly this, so leave them be.
