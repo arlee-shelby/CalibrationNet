@@ -101,7 +101,7 @@ change and follows the escape hatch below.
 - Position planning method (+ the shared-trend saga: plan item 11):
   **docs/position_planning.md** and development_plan.md.
 - Source assignment design (joint method, pools, anchors, claims):
-  the module docstrings in calibrationnet/pipeline/
+  the module docstrings in calibrationnet/acquisition/
   source_assignment.py + scripts/assign_sources.py, and the
   assistant's persistent memory.
 - Notebook analysis how-to: **docs/notebook_fitting.md**.
@@ -199,6 +199,38 @@ so dropping costs only the migration on top. A public repo with an
 always-true "meaningless" column invites confusion (this item exists
 because AS had to ask what it was for).
 
+**Rename `calibrationnet/calibration.py` -> `calibration_fit.py`
+(do when cleaning the calibrationnet/ ROOT cluster — AS decision
+2026-08-27).** Two files share the name: the root module (calibration
+fit math — `fit_calibration`, `plot_calibration`; its docstring
+already says "Calibration fit math") and `models/calibration.py`
+(the Calibration/CalibrationPoint ORM entities). Python never
+confuses them (full dotted paths differ), but humans do — identical
+editor tabs, ambiguous references in notes. KEEP `models/
+calibration.py`: the models directory is one-file-per-entity
+(adc_peak.py, run_pixel.py, ...) and five sibling files import it as
+`.calibration`; renaming it would break that directory's own
+convention. RENAME the root module. This is a plain
+behavior-neutral rename under the charter (applied consistently),
+NOT an escape-hatch item. Touch list as of 2026-08-27 (re-grep
+`from calibrationnet.calibration` before acting — it can go stale):
+
+1. `git mv calibrationnet/calibration.py
+   calibrationnet/calibration_fit.py` (git mv so history follows).
+2. Its only two importers: `scripts/calibrate.py` (~line 52) and
+   `scripts/offline/calibrate.py` (~line 32) — both import
+   `fit_calibration, plot_calibration`.
+3. Doc mentions of the ROOT module: docs/repo_layout.md — the
+   `calibrationnet/` row of the directory table AND the "three code
+   layers" section (two mentions there).
+4. While at it: docs/python_notes.md line ~146 says "calibration.py"
+   meaning the MODELS one — clarify to "models/calibration.py"
+   (that ambiguity is the reason this item exists).
+
+Verify: py_compile both touched scripts + the renamed module, then
+the calibrate.py smoke run per the driver class (engine checks too —
+root cluster: `benchmark_fits.py --check-only`).
+
 **Linter/formatter decision (after cleanup, before public release).**
 The repo has no linter configured. Decide whether to add one (e.g.
 Ruff for lint, optionally Black for formatting) with a config checked
@@ -211,7 +243,7 @@ auto-formatting (md5-checked byte-identical). See docs/python_notes.md
 "Linters" for what these tools do.
 
 **`number_subruns` = lastsubrun + 1 (check when cleaning
-calibrationnet/pipeline/slow_controls.py).** The run-ingestion query
+calibrationnet/acquisition/slow_controls.py).** The run-ingestion query
 stores `lastsubrun + 1 AS number_subruns` on the premise that
 lastsubrun is 0-indexed. Verify the premise when cleaning that file —
 e.g. count the actual Run<r>_<subrun>.h5 files for a couple of runs
@@ -225,14 +257,14 @@ and confirm the count equals the stored number_subruns.
 |---|---|---|---|
 | `calibrationnet/__init__.py` | (nothing imports it — leaf) | engine |   |
 | `calibrationnet/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | engine |   |
-| `calibrationnet/db.py` | calibrationnet/pipeline/source_assignment.py, calibrationnet/queries.py, scripts/apply_trap_filter.py, scripts/assign_sources.py, scripts/benchmark_fits.py, scripts/calibrate.py, scripts/extract_adc_peaks.py, scripts/fit_spectra.py, scripts/ingest_board_channels.py, scripts/ingest_filter_output.py, scripts/ingest_run.py, scripts/low_gain_report.py, scripts/optimal_positions.py, scripts/pending_segments.py, scripts/process_run.py, scripts/seed_decay_energies.py, scripts/seed_pixels.py, scripts/seed_source_installations.py, scripts/seed_sources.py, scripts/show_hitmap.py | engine |   |
+| `calibrationnet/db.py` | calibrationnet/acquisition/source_assignment.py, calibrationnet/queries.py, scripts/apply_trap_filter.py, scripts/assign_sources.py, scripts/benchmark_fits.py, scripts/calibrate.py, scripts/extract_adc_peaks.py, scripts/fit_spectra.py, scripts/ingest_board_channels.py, scripts/ingest_filter_output.py, scripts/ingest_run.py, scripts/low_gain_report.py, scripts/optimal_positions.py, scripts/pending_segments.py, scripts/process_run.py, scripts/seed_decay_energies.py, scripts/seed_pixels.py, scripts/seed_source_installations.py, scripts/seed_sources.py, scripts/show_hitmap.py | engine |   |
 | `calibrationnet/fit_functions.py` | calibrationnet/fitting.py, calibrationnet/queries.py, scripts/benchmark_fits.py | FROZEN |   |
 | `calibrationnet/fit_functions_reference.py` | scripts/benchmark_fits.py | FROZEN |   |
 | `calibrationnet/fit_recipes.py` | calibrationnet/fitting.py, calibrationnet/queries.py, scripts/benchmark_fits.py, scripts/fit_spectra.py, scripts/low_gain_report.py, scripts/offline/calibrate.py, scripts/offline/fit_spectra.py | engine |   |
 | `calibrationnet/fitting.py` | scripts/fit_spectra.py, scripts/offline/fit_spectra.py | engine |   |
-| `calibrationnet/geometry.py` | calibrationnet/hitmap.py, calibrationnet/pipeline/source_assignment.py, calibrationnet/positions.py, scripts/assign_sources.py, scripts/optimal_positions.py | engine |   |
+| `calibrationnet/geometry.py` | calibrationnet/hitmap.py, calibrationnet/acquisition/source_assignment.py, calibrationnet/positions.py, scripts/assign_sources.py, scripts/optimal_positions.py | engine |   |
 | `calibrationnet/hitmap.py` | scripts/offline/show_hitmap.py, scripts/show_hitmap.py | engine |   |
-| `calibrationnet/positions.py` | calibrationnet/pipeline/ingest.py, calibrationnet/pipeline/source_assignment.py, scripts/optimal_positions.py | engine |   |
+| `calibrationnet/positions.py` | calibrationnet/acquisition/ingest.py, calibrationnet/acquisition/source_assignment.py, scripts/optimal_positions.py | engine |   |
 | `calibrationnet/queries.py` | scripts/fit_spectra.py | engine |   |
 
 ### calibrationnet/models/
@@ -252,19 +284,19 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/models/spectrum_fit.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/trap_filter_output.py | schema | x |
 | `calibrationnet/models/trap_filter_output.py` | calibrationnet/models/calibration.py, calibrationnet/models/run_pixel.py, calibrationnet/models/spectrum_fit.py | schema | x |
 
-### calibrationnet/pipeline/
+### calibrationnet/acquisition/
 
 | file | imported/used by | risk class | done |
 |---|---|---|---|
-| `calibrationnet/pipeline/__init__.py` | (nothing imports it — leaf) | engine |   |
-| `calibrationnet/pipeline/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine |   |
-| `calibrationnet/pipeline/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine |   |
-| `calibrationnet/pipeline/motion_control.py` | calibrationnet/pipeline/ingest.py | engine |   |
-| `calibrationnet/pipeline/slow_controls.py` | calibrationnet/pipeline/ingest.py, scripts/offline/export_segments.py | engine |   |
-| `calibrationnet/pipeline/source_assignment.py` | scripts/assign_sources.py, scripts/optimal_positions.py | engine |   |
-| `calibrationnet/pipeline/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine |   |
-| `calibrationnet/pipeline/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine |   |
-| `calibrationnet/pipeline/wiring.py` | scripts/seed_pixels.py | engine |   |
+| `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine |   |
+| `calibrationnet/acquisition/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine |   |
+| `calibrationnet/acquisition/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine |   |
+| `calibrationnet/acquisition/motion_control.py` | calibrationnet/acquisition/ingest.py | engine |   |
+| `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/ingest.py, scripts/offline/export_segments.py | engine |   |
+| `calibrationnet/acquisition/source_assignment.py` | scripts/assign_sources.py, scripts/optimal_positions.py | engine |   |
+| `calibrationnet/acquisition/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine |   |
+| `calibrationnet/acquisition/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine |   |
+| `calibrationnet/acquisition/wiring.py` | scripts/seed_pixels.py | engine |   |
 
 ### scripts/
 

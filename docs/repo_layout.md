@@ -20,6 +20,42 @@ directory; everything historical lands in `development/`.
 | `hitmaps/` | hit maps from scripts/show_hitmap.py (gitignored, regenerable) |
 | `development/` | development-era material, kept for reference, none of it needed to run the pipeline: `inputs/` (uploaded reference files: sample h5, nabPy CSV outputs, collaboration code, reference hit maps), `notebooks/` (exploration notebooks and the pre-pipeline fitting sketch), `outputs/` (superseded generated files: old-format position lists, the pre-envelope plan, review-CSV edits, old one-off run lists — the live `run_list.txt` moved to the repo root, 2026-08-10) |
 
+## The three code layers (and the one-way import rule)
+
+The Python code is organized in three layers with strictly one-way
+imports — `scripts/` imports `calibrationnet/acquisition/` imports the
+`calibrationnet/` root; never the reverse:
+
+1. **`calibrationnet/` root — the domain library:** what things ARE
+   and how they are computed. Schema (`models/`), the frozen fit
+   model, recipes, the retry ladder (`fitting.py`), calibration math
+   (`calibration.py`), detector/tray geometry, the notebook read
+   layer (`queries.py`). Nothing here knows where data comes from —
+   no h5 parsing, no slow controls, no SLURM — which is what let
+   `fitting.py`/`calibration.py` be reused verbatim by the offline
+   (database-free) pipeline in `scripts/offline/`.
+2. **`calibrationnet/acquisition/` — the data-ACQUISITION layer:** the
+   logic that reads the outside world and records it — slow-controls
+   and motion-archive readers, waveform/h5 handling, trap filtering,
+   board-channel and wiring maps, run/segment ingest — plus the
+   source-assignment bookkeeping. These import the root's models and
+   geometry; the root never needs them.
+3. **`scripts/` — command-line entry points:** argparse drivers plus
+   workflow glue (progress printing, review/failure CSVs, SLURM
+   handoffs). Each imports its reusable logic from the package.
+
+Note the deliberate asymmetry: `acquisition/` is NOT "everything that
+writes to the database." The analysis stages (fit -> extract ->
+calibrate) also store rows, but their storage code lives in their
+scripts (fit_spectra.py, extract_adc_peaks.py, calibrate.py) with
+only the math in root modules (`fitting.py`, `calibration.py`). The
+factoring rule that produces this: code needed by more than one
+entry point lives in the package; logic with exactly one consumer
+stays in its script. The offline pipeline was the forcing function —
+the acquisition modules and the fit/calibration MATH were needed
+twice and moved into the package; each analysis stage's
+database-storage half has exactly one entry point and stayed put.
+
 Working files at the root: `source_assignment_review.csv` (the live
 assignment review file, gitignored — assign_sources.py writes and reads
 it in place) and `run_list.txt` (the master list of runs the batch

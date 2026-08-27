@@ -28,7 +28,7 @@ instrument-table-era runs (through 8865) store it negative; exactly
 the 4 archive-era runs — 9464, 9469, 9470, 9521 — store hv ≈ +27.04.
 
 **Cause:** the motion-control archive path (SETTINGS_CHANNELS in
-calibrationnet/pipeline/motion_control.py) stored hv WITHOUT the sign
+calibrationnet/acquisition/motion_control.py) stored hv WITHOUT the sign
 flip — the archive readback BL13:Nab:UDETHV:voltage reports +27 kV
 for a physical -27 kV — silently re-introducing the sign mistake that
 was corrected across the runs table on 2026-07-30. The
@@ -196,3 +196,39 @@ README has NOT been cleaned yet — when it is (docs prose pass at the
 latest), re-check this docstring: section still exists, same name,
 conventions unchanged. (This entry prompted the general
 cross-reference rule now in cleanup_plan.md, per-file loop step 5.)
+
+---
+
+## calibrationnet/pipeline/ → calibrationnet/acquisition/ — 2026-08-27 — done
+
+### Directory rename (behavior-neutral, applied repo-wide)
+
+**Decision (AS, 2026-08-27):** rename the package directory so the
+folder name matches its role — the data-ACQUISITION layer of the
+three-code-layers design (rationale: docs/repo_layout.md, "The three
+code layers"). This also frees the word "pipeline" to mean only the
+run processing chain in prose, removing a long-standing ambiguity.
+
+**Scope applied:** `git mv calibrationnet/pipeline
+calibrationnet/acquisition` (history follows); 18 import lines across
+13 scripts (incl. scripts/offline/); the live `python -c` probes in
+scripts/apply_trap_filter.sh and README.md; path mentions in
+calibrationnet/positions.py's docstring and in README.md,
+docs/repo_layout.md, docs/cleanup_plan.md, docs/cluster_resources.md,
+docs/source_assignment.md, docs/cleanup_findings.md,
+docs/python_notes.md. The acquisition/__init__.py docstring was
+rewritten by AS in the same pass (it stale-claimed fitting and
+calibration would live here). Internal modules use relative imports —
+unchanged. pyproject.toml discovers `calibrationnet*` — unchanged.
+
+**Deliberately NOT changed:** docs/development_plan.md line ~533 and
+docs/pipeline_roadmap.md (closed/historical documents — the old path
+is accurate history). models/ and alembic/ contain no references
+(verified by grep).
+
+**Verified 2026-08-27:** repo-wide grep shows zero remaining
+`calibrationnet[./]pipeline` outside the historical docs;
+`py_compile` clean on every .py under calibrationnet/ and scripts/;
+all 9 acquisition modules import cleanly; `benchmark_fits.py
+--check-only` integrity OK (frozen md5 match, changeable functions
+identical).

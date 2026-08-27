@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from calibrationnet.db import get_session
 from calibrationnet.models import RunSegment
-from calibrationnet.pipeline.trap_filter import segments_missing_output
+from calibrationnet.acquisition.trap_filter import segments_missing_output
 
 
 def compress(numbers) -> str:

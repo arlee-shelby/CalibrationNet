@@ -54,7 +54,7 @@ fi
 # Fail immediately with a useful message rather than part-way through a
 # segment: this needs ONE environment providing both nabPy and this package
 # (see "Setup" in README.md).
-if ! python -c "from calibrationnet.pipeline.waveforms import import_nabpy
+if ! python -c "from calibrationnet.acquisition.waveforms import import_nabpy
 import_nabpy()"; then
     echo "ERROR: the active python cannot run this job. It needs ONE"
     echo "environment providing both nabPy and calibrationnet — see 'Setup'"

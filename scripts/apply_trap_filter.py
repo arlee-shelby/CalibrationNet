@@ -19,12 +19,12 @@ from pathlib import Path
 
 from calibrationnet.db import get_session
 from calibrationnet.models import RunSegment
-from calibrationnet.pipeline.board_channels import ingest_board_channels
-from calibrationnet.pipeline.trap_filter import (
+from calibrationnet.acquisition.board_channels import ingest_board_channels
+from calibrationnet.acquisition.trap_filter import (
     ingest_filter_output,
     segments_missing_output,
 )
-from calibrationnet.pipeline.waveforms import (
+from calibrationnet.acquisition.waveforms import (
     available_subruns,
     find_subruns,
     save_filter_output,

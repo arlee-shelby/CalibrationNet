@@ -10,7 +10,7 @@ was recorded in, so every run_segment stores its convention name:
 
   "inches-2026"   (from 2026-07-24)
       Positions come from the motion-control readback channels
-      (calibrationnet.pipeline.motion_control). BOTH axes are in inches,
+      (calibrationnet.acquisition.motion_control). BOTH axes are in inches,
       and the stage was re-homed, so the centered position now reads 0
       horizontally.
 

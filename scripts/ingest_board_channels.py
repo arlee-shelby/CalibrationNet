@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from calibrationnet.db import get_session
 from calibrationnet.models import Run
-from calibrationnet.pipeline.board_channels import (
+from calibrationnet.acquisition.board_channels import (
     apply_bc_map,
     clean_bc_pairs,
     ingest_board_channels,

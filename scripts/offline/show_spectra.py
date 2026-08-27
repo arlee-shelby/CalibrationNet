@@ -20,7 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from calibrationnet.pipeline.trap_filter import parse_filter_filename
+from calibrationnet.acquisition.trap_filter import parse_filter_filename
 
 
 def main() -> None:

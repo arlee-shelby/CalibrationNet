@@ -25,7 +25,7 @@ import argparse
 from pathlib import Path
 
 from calibrationnet.db import get_session
-from calibrationnet.pipeline.trap_filter import (
+from calibrationnet.acquisition.trap_filter import (
     ingest_filter_output,
     parse_filter_filename,
 )

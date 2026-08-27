@@ -35,7 +35,7 @@ from calibrationnet.fitting import (LINE_GROUP_OF, centroid_report,
                                     gain_scout, pixel_relation,
                                     plot_failed_spectrum, run_recipe,
                                     update_failure_csv)
-from calibrationnet.pipeline.trap_filter import parse_filter_filename
+from calibrationnet.acquisition.trap_filter import parse_filter_filename
 
 REPO = Path(__file__).resolve().parents[2]
 MAX_PEAKS = 6

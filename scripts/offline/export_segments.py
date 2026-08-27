@@ -17,8 +17,8 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from calibrationnet.pipeline.ingest import derive_segments
-from calibrationnet.pipeline.slow_controls import fetch_run
+from calibrationnet.acquisition.ingest import derive_segments
+from calibrationnet.acquisition.slow_controls import fetch_run
 
 
 def main() -> None:

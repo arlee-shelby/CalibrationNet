@@ -154,7 +154,7 @@ was recorded in, so every segment stores its `position_convention`
 - **`inches-2026`** (from 2026-07-24) — positions come from the
   motion-control archive (`BL13:Nab:RSIS:leftRightMPOS:MPOS` and
   `:downUpstreamMPOS:MPOS` in the `Test` database, read by
-  `calibrationnet/pipeline/motion_control.py`, which also derives the
+  `calibrationnet/acquisition/motion_control.py`, which also derives the
   dwell periods that become segments). BOTH axes are inches, and the stage
   was re-homed so the centered position now reads 0 horizontally.
 
@@ -232,7 +232,7 @@ from the repo root.
   subruns overlap it, filters only those waveforms, ingests the energies,
   and **deletes the intermediate CSV** — the .h5 files are the archive, so
   keeping filter output would only waste storage.
-- [calibrationnet/pipeline/waveforms.py](calibrationnet/pipeline/waveforms.py)
+- [calibrationnet/acquisition/waveforms.py](calibrationnet/acquisition/waveforms.py)
   holds the nabPy work. It is the only module that needs nabPy, so nothing
   else imports it; set `NABPY_PATH` if nabPy is not already importable, and
   `CALNET_VENV` to point the batch script at the right environment.
@@ -463,7 +463,7 @@ export HDF5_DIR CFLAGS="-Wno-int-conversion" LDFLAGS="-Wl,-rpath,$HDF5_DIR/lib"
 Either way, check the result:
 
 ```bash
-python -c "from calibrationnet.pipeline.waveforms import import_nabpy; \
+python -c "from calibrationnet.acquisition.waveforms import import_nabpy; \
 import_nabpy(); from calibrationnet.db import get_engine; \
 get_engine().connect(); print('nabPy + database OK')"
 ```

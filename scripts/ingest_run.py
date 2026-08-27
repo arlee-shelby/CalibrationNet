@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from calibrationnet.db import get_session
-from calibrationnet.pipeline.ingest import ingest_run
+from calibrationnet.acquisition.ingest import ingest_run
 
 
 def main() -> None:

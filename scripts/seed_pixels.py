@@ -10,7 +10,7 @@ is quasi-static.
 
 from calibrationnet.db import get_session
 from calibrationnet.models import Pixel
-from calibrationnet.pipeline.wiring import load_wiring
+from calibrationnet.acquisition.wiring import load_wiring
 
 
 def main() -> None:

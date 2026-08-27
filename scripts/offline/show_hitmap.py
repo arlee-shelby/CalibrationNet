@@ -16,7 +16,7 @@ from collections import Counter
 from pathlib import Path
 
 from calibrationnet.hitmap import draw
-from calibrationnet.pipeline.trap_filter import parse_filter_filename
+from calibrationnet.acquisition.trap_filter import parse_filter_filename
 
 
 def count_pixels(path):

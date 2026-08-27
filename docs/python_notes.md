@@ -426,3 +426,22 @@ hints are load-bearing, not just documentation.
 `def __repr__(self) -> str:` — the `-> str` says "returns a string";
 `self` is the object the method was called on (Python passes it
 automatically: `run.__repr__()` means `Run.__repr__(run)`).
+
+## `__init__.py` (why every package directory has one)
+
+The file that marks a directory as a regular Python *package*. Its
+presence is what lets `from calibrationnet.acquisition.trap_filter
+import ...` resolve as part of the `calibrationnet` package; the file
+itself runs (as the module `calibrationnet.acquisition`) the first time
+anything under the package is imported. An empty or docstring-only
+`__init__.py` is completely normal — its job is to exist, not to hold
+code.
+
+Python 3.3+ technically allows packages *without* it ("namespace
+packages"), but relying on that is a footgun: package-discovery
+tooling (`setuptools.find_packages()`, mypy's default mode, some
+linters) skips or mishandles such directories, and any same-named
+directory elsewhere on `sys.path` can silently merge into a namespace
+package. A regular package (with `__init__.py`) can't be merged into
+and reads as an explicit "this is a package" signal. So: keep them,
+even when empty.

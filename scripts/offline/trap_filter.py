@@ -26,7 +26,7 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-from calibrationnet.pipeline.waveforms import (
+from calibrationnet.acquisition.waveforms import (
     available_subruns,
     find_subruns,
     save_filter_output,

@@ -4,7 +4,7 @@ Which physical source sat over which pixel, for every run segment —
 `run_pixels.source_id`, the fact the whole analysis chain keys on
 (fit recipes come from the pixel's isotope; calibrations pair its peaks
 with that source's keV values). Driven by `scripts/assign_sources.py`
-with the machinery in `calibrationnet/pipeline/source_assignment.py`.
+with the machinery in `calibrationnet/acquisition/source_assignment.py`.
 
 ## How a placement is derived
 
