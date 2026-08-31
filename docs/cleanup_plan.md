@@ -262,6 +262,18 @@ recipe (nabreplay in particular) even in the one canonical file is
 acceptable, and decide the git-history question (scrub vs squash vs
 leave) explicitly.
 
+**Definition order (AS ruling 2026-08-28): callees above callers.**
+Within a module, a function is DEFINED ABOVE the functions that call
+it (helpers first, entry points last) — AS reads bottom-up, not
+"newspaper order". Python allows either (names resolve at call time;
+see docs/python_notes.md "Function definition order"), so reordering
+is behavior-neutral — with the one real constraint that module-level
+EXECUTED code (constants, queries) must stay below everything it
+references at import time. Procedure: the assistant checks definition
+order in the pre-edit "things to note about this file" summary for
+every file, and re-checks it in the diff review. models/ files
+audited 2026-08-28: no violations (class-only files).
+
 **Trailing whitespace (AS ruling 2026-08-27): ALWAYS removed.**
 Unlike line length, trailing whitespace on any line of a cleaned
 file is fixed as part of cleaning it (it is invisible in editors,
@@ -335,7 +347,7 @@ and confirm the count equals the stored number_subruns.
 |---|---|---|---|
 | `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine | x |
 | `calibrationnet/acquisition/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine |   |
-| `calibrationnet/acquisition/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine |   |
+| `calibrationnet/acquisition/ingest.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/epics_controls.py` | calibrationnet/acquisition/ingest.py | engine | x |
 | `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/ingest.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine |   |

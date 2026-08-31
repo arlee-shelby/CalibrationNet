@@ -537,3 +537,61 @@ one item per line, EVERY line ends with a comma, the last included —
 future additions/reorderings then touch only their own line in the
 diff, and no line is a special case. Single-line calls take no
 trailing comma. Black/Ruff enforce exactly this, so leave them be.
+
+## Set comprehensions + model introspection (ingest.py's _RUN_COLUMNS)
+
+`{c.name for c in Run.__table__.columns} - {"run_number"}` stacks
+three things:
+
+- `Run.__table__.columns`: SQLAlchemy keeps each model's table
+  metadata on the class; `.columns` lists its column objects. Asking
+  the model beats hand-maintaining a duplicate list of names.
+- `{... for ...}`: a SET comprehension — same syntax as a list
+  comprehension but `{}` builds a set (unordered, unique, O(1) `in`
+  tests — the right container for membership filtering).
+- `- {...}`: set difference (remove the primary key).
+
+The result filters dict keys before `setattr`: only keys naming a
+real Run column are stored; extras fall through. Self-maintaining
+contract — a new Run column is automatically ingestable if the
+source query aliases its value to the column's name (that is why
+slow_controls' SQL says `lastsubrun + 1 AS number_subruns`).
+
+## Idempotent (ingest.py and every pipeline stage)
+
+An operation is idempotent when running it once or N times leaves the
+same end state — repeats are always safe (math origin: f(f(x)) =
+f(x)). In practice: look-up-then-update instead of blind INSERT,
+skip-if-done instead of redo, replace instead of append.
+
+Why CalibrationNet insists on it everywhere (ingest, trap filter,
+fitting, seeds): "just re-run the command" becomes the universal
+recovery from any interruption — dead DB node, dropped tunnel, timed-
+out job — with no cleanup step. The subtle half: idempotence must not
+destroy downstream work; ingest.py's sync_segments keeps (and warns
+about) a segment that disappeared from the derivation but has
+analysis attached, rather than deleting it.
+
+## Function definition order (why a helper can be defined below its caller)
+
+A `def` body's names resolve at CALL time, not definition time. While
+a module loads, functions are only being defined, not called — so by
+the time anything invokes ingest_run, sync_segments (defined further
+down) already exists. "Define before use" only binds module-level
+EXECUTED code (constants like `_RUN_COLUMNS = {...}` run at import
+and need their ingredients already defined above).
+
+Given that freedom, files here read in newspaper order: the public
+entry point first (the story), helpers after, in the order the story
+mentions them.
+
+## `dict.get` vs `dict["key"]` (ingest.py, slow_controls.py)
+
+`data["key"]` raises KeyError when the key is missing; `data.get("key")`
+returns None instead (or a fallback: `data.get("key", 0)`). Choose by
+whether absence is legitimate: `.get` when a missing key is a normal
+state with a sensible default (parsed positions that may not exist ->
+NULL columns), `[]` when the key MUST exist and its absence is a bug
+that should fail loudly (export_segments uses data["start_time"] on
+purpose). `.get` exists because `data` is a plain dict — it is just a
+method every dict has.

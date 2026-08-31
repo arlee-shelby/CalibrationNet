@@ -383,3 +383,47 @@ are ~30 min.
 **Verified:** py_compile, module + ingest imports, benchmark_fits
 --check-only all green; trailing whitespace stripped (12 lines);
 zero old-name leftovers repo-wide.
+
+---
+
+## calibrationnet/acquisition/ingest.py — 2026-08-31 — done
+
+### Cleanup review
+
+**Behavior-neutral throughout** — no output or logic changes: the
+ValueError text and the "keeping it" warning print are untouched;
+all code edits are multi-line-call collapses (formatting only).
+
+**Reordered per the definition-order ruling (2026-08-28):**
+derive_segments -> sync_segments -> ingest_run (callees above
+callers; entry point last).
+
+**Knowledge relocated:** "positions are not Run columns — they live
+on run_segments" moved from the old _RUN_COLUMNS comment into
+derive_segments' docstring ("the source position is an attribute of
+RunSegment, not of the Run"). The fill-if-missing guarantee ("a
+value the legacy tables provided is never overwritten") restored as
+a comment on the `is None` check inside ingest_run.
+
+**Accepted losses (recorded here as the durable home):**
+- The epoch-branch explanation formerly in derive_segments'
+  docstring: runs from 2026-07-24 get ONE SEGMENT PER DWELL from the
+  EPICS archive (a rastering run has dozens); earlier runs get a
+  single whole-run segment whose position comes only from the
+  free-text run description.
+- The concrete min_dwell boundary example: RUN 9402's grid dwells
+  were themselves ~5 min, sitting exactly on the MIN_DWELL default —
+  ingesting it needed a lowered --min-dwell or segments were
+  silently dropped. (Run 9464 needed --min-dwell 2; that one is
+  still named in scripts/offline/export_segments.py's help text.)
+- The old module docstring's enumeration of non-column keys
+  (rundescription, errorcode) — the storing contract is documented
+  from the other side in slow_controls.fetch_run's docstring.
+
+**Cross-references:** module docstring mentions grafana (lowercase)
+and the "scripts" folder; ingest_run's docstring points at
+epics_controls.py. Nothing points at not-yet-cleaned files.
+
+**Verified 2026-08-31:** py_compile, imports, benchmark_fits
+--check-only green; trailing whitespace stripped; definition order
+compliant.

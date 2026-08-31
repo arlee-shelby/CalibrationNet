@@ -112,6 +112,39 @@ _RUN_QUERY = text(
 )
 
 
+def _parse_positions(description: Optional[str]) -> dict:
+    """Pull source positions out of the run description (ex:
+    "calibration run, source lin pos: 34.0, 2D: 2.7 units, ..."). This is only necessary for
+    older runs where the RSIS motion control was not recorded. Returns
+    {} for keys it can't find so ingest just leaves those columns NULL. Three general styles
+    were used in 2025 data, so each is used to attempt to find a match and assign a position
+    for that run.
+    """
+    if not description:
+        return {}
+    found = {}
+    # style A: "source lin pos: 34.0, 2D: 2.7 units"
+    linear = re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+    if linear:
+        found["linear_position"] = float(linear.group(1))
+    horizontal = re.search(r"2D:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+    if horizontal:
+        found["horizontal_position"] = float(horizontal.group(1))
+    # style B: "position: 34.0,2.7" / "position 34.4/1.7" / "position 33.2 2.7"
+    if not found:
+        pair = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)",description,re.I)
+        if pair:
+            found["linear_position"] = float(pair.group(1))
+            found["horizontal_position"] = float(pair.group(2))
+    # mixed style: "position: 35.0 2D 2.2" — 2D matched above but linear
+    # didn't; the number right after "position" is the linear position
+    if "linear_position" not in found:
+        lone_linear = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
+        if lone_linear:
+            found["linear_position"] = float(lone_linear.group(1))
+    return found
+
+
 def fetch_run(run_number: int) -> Optional[dict]:
     """Pull all the metadata for a run to be stored from the slow-control database
     using one query. Note, most settings are averaged over the run period, except start/end times
@@ -144,36 +177,3 @@ def fetch_run(run_number: int) -> Optional[dict]:
     data = dict(row)
     data.update(_parse_positions(data.get("rundescription")))
     return data
-
-
-def _parse_positions(description: Optional[str]) -> dict:
-    """Pull source positions out of the run description (ex:
-    "calibration run, source lin pos: 34.0, 2D: 2.7 units, ..."). This is only necessary for
-    older runs where the RSIS motion control was not recorded. Returns
-    {} for keys it can't find so ingest just leaves those columns NULL. Three general styles
-    were used in 2025 data, so each is used to attempt to find a match and assign a position
-    for that run.
-    """
-    if not description:
-        return {}
-    found = {}
-    # style A: "source lin pos: 34.0, 2D: 2.7 units"
-    linear = re.search(r"lin\s*pos:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-    if linear:
-        found["linear_position"] = float(linear.group(1))
-    horizontal = re.search(r"2D:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-    if horizontal:
-        found["horizontal_position"] = float(horizontal.group(1))
-    # style B: "position: 34.0,2.7" / "position 34.4/1.7" / "position 33.2 2.7"
-    if not found:
-        pair = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)",description,re.I)
-        if pair:
-            found["linear_position"] = float(pair.group(1))
-            found["horizontal_position"] = float(pair.group(2))
-    # mixed style: "position: 35.0 2D 2.2" — 2D matched above but linear
-    # didn't; the number right after "position" is the linear position
-    if "linear_position" not in found:
-        lone_linear = re.search(r"position:?\s*(-?\d+(?:\.\d+)?)", description, re.I)
-        if lone_linear:
-            found["linear_position"] = float(lone_linear.group(1))
-    return found
