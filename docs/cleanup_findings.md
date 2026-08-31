@@ -123,7 +123,7 @@ in-place update would lose which wiring old runs had. Assessment
 (2026-08-24): safe as designed — (1) nothing computes from preamp/fet
 (they are human-facing metadata; processing depends on board_channel,
 which IS per-run on RunPixel); (2) history is not actually lost — any
-remap means editing data/pixel_wiring.csv and re-running seed_pixels,
+remap means editing data/electronics_mapping.csv and re-running seed_pixels,
 and git history preserves every old map; (3) if per-run wiring history
 ever became analytically important, the fix is a migration moving
 preamp/fet to RunPixel (development, deferred until needed). The
@@ -427,3 +427,44 @@ epics_controls.py. Nothing points at not-yet-cleaned files.
 **Verified 2026-08-31:** py_compile, imports, benchmark_fits
 --check-only green; trailing whitespace stripped; definition order
 compliant.
+
+---
+
+## calibrationnet/acquisition/wiring.py → electronics_mapping.py — 2026-08-31 — done
+
+### Module + data file renamed, "wiring" vocabulary retired (behavior-neutral)
+
+**Decision (AS, 2026-08-31):** "wiring" was confusing as a name for
+what the data actually is — the pixel -> preamp/FET electronics
+mapping. Renamed: the module (wiring.py -> electronics_mapping.py,
+git mv), the data file (data/pixel_wiring.csv ->
+data/electronics_mapping.csv, git mv), and the loader (load_wiring ->
+load_mapping). The word "wiring" was removed from live prose
+repo-wide, replaced with mapping/electronics-mapping vocabulary.
+
+**Scope applied:** _DEFAULT_CSV path in the module; the sole importer
+scripts/seed_pixels.py (import, call, locals, docstring); README,
+docs/repo_layout.md (directory + seed tables, layer prose),
+docs/cleanup_plan.md inventory row; docs/cleanup_findings.md live
+filename pointers. AS edited the two already-cleaned models files
+(comment-only, re-verified): models/pixel.py (4 sites, including two
+stale csv filenames) and models/run_pixel.py (1 site). Deliberately
+untouched: alembic/versions/134d9680eb84 ("move preamp/fet wiring to
+pixels" — migration history, never edited) and the historical
+narrative wording inside older cleanup_findings entries (dated
+records; only their filename pointers were updated).
+
+### Content pass (same sitting)
+
+Docstring rewritten by AS: provenance now says the map figures came
+from the Nab wiki; loader-mirroring explanation kept; pixel-58 and
+label-uniqueness facts kept. A comment was added documenting that
+parents[2] in _DEFAULT_CSV is the repo root (depth-dependent anchor).
+Definition order compliant (constant above its consumer; single
+function).
+
+**Verified 2026-08-31:** py_compile; live smoke test load_mapping()
+returns 254 pixels with 58/1058 unmapped; benchmark_fits --check-only
+green; zero "wiring" left in code outside migration history; trailing
+whitespace stripped; models/pixel.py and run_pixel.py re-verified
+(comment-only diffs, py_compile OK).

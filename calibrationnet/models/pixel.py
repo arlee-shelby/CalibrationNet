@@ -13,12 +13,12 @@ class Pixel(Base):
     """A physical pixel on one of the two detectors in the Nab Experiment. Exists once.
 
     Numbering convention: upper-detector pixels are 1-127; lower-detector
-    pixels are the same number + 1000 (1001-1127). Board channel wiring is stored per
+    pixels are the same number + 1000 (1001-1127). Board channel mapping is stored per
     run on RunPixel, since it can occasionally change on a per run basis.
 
-    Preamp/FET wiring is quasi-static and lives here (seeded from data/pixel_wiring.csv).
+    Preamp/FET mapping is quasi-static and lives here (seeded from data/electronics_mapping.csv).
     It is unlikely preamp and FET maps will change, but if they were to, these values can be
-    updated and the old maps survive through the pixel_wiring.csv file git history. The database
+    updated and the old maps survive through the electronics_mapping.csv file git history. The database
     doesn't store any per-run history of the preamp/FET maps.
 
     Note, pixel 0 which is in the raw hdf5 files is a catch-all for board channels
@@ -44,8 +44,8 @@ class Pixel(Base):
     pixel_number: Mapped[int] = mapped_column(primary_key=True)
     detector: Mapped[str] = mapped_column(String(10))  # "upper" | "lower"
 
-    # quasi-static wiring (labels like "G6"/"F2" encode the channel numbers and preamp/FET label).
-    # lives here, not on run_pixels, because remapping is rare; if it ever
+    # quasi-static mapping (labels like "G6"/"F2" encode the channel numbers and preamp/FET label).
+    # lives here, not on run_pixels, because re-mapping is rare; if it ever
     # happens, update these values — per-run history isn't kept.
     preamp: Mapped[Optional[str]] = mapped_column(String(50))
     fet: Mapped[Optional[str]] = mapped_column(String(50))

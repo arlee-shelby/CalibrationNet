@@ -23,7 +23,7 @@ class RunPixel(Base):
     across a run's segments) and a nullable prediction of which source was centered over the pixel
     (which is what changes when the sources move between segments). Note, the prediction of which source
     was centered over the pixel comes from source_assignment.py and acts only as a predictor for future analysis work.
-    The quasi-static preamp/FET wiring lives on Pixel instead. The analysis chain
+    The quasi-static preamp/FET mapping lives on Pixel instead. The analysis chain
     (trap filter outputs -> spectrum fits -> peaks -> calibrations) comes from this table, i.e. all analysis works with run_pixels.
 
     run_number/pixel_number hold the natural keys of runs/pixels directly,

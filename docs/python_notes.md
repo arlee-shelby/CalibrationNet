@@ -595,3 +595,21 @@ NULL columns), `[]` when the key MUST exist and its absence is a bug
 that should fail loudly (export_segments uses data["start_time"] on
 purpose). `.get` exists because `data` is a plain dict — it is just a
 method every dict has.
+
+## `Path(__file__).resolve().parents[2]` (anchoring paths to the module)
+
+`__file__` is the running module's own .py path; `.resolve()` makes it
+absolute; `.parents[N]` climbs N+1 directory levels (parents[0] is the
+containing folder); pathlib's `/` operator joins segments
+cross-platform.
+
+Why not a bare relative path like "data/foo.csv": relative paths
+resolve against the process's CURRENT WORKING DIRECTORY (wherever the
+user cd'd), not against the file containing the code — so they break
+the moment a script runs from home, a SLURM scratch dir, or a
+notebook. Anchoring to `__file__` works from any cwd because the
+data's location relative to the MODULE is fixed.
+
+Caveat: `parents[N]` hard-codes the module's depth in the tree — move
+the file a level and the anchor silently points elsewhere. Worth a
+comment on the line.

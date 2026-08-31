@@ -20,7 +20,7 @@ position:
 ```
 runs ──< run_segments ──< run_pixels >── pixels
           (one dwell at        │          (physical pixel; quasi-static
-           one source          │           preamp/FET wiring)
+           one source          │           preamp/FET electronics mapping)
            position)           │
                               ├──> sources   (the specific physical source
                               │        │      — label + serial number —
@@ -62,9 +62,9 @@ runs ──< run_segments ──< run_pixels >── pixels
   long run holds many positions, so it lives on run_segments.
 - **pixels** — the physical detector pixel: pixel_number (primary key,
   same reasoning as run_number), detector ("upper"/"lower"), and its
-  quasi-static preamp/FET wiring (labels like "G6"/"F2" encode the
+  quasi-static preamp/FET electronics mapping (labels like "G6"/"F2" encode the
   channel; identical mapping on both detectors, seeded from
-  data/pixel_wiring.csv by scripts/seed_pixels.py). Convention: upper
+  data/electronics_mapping.csv by scripts/seed_pixels.py). Convention: upper
   pixels are 1-127, lower pixels are the same number + 1000 (1001-1127);
   enforced by check constraints.
 - **run_segments** — one period of constant source-frame position within a
