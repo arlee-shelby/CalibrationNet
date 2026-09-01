@@ -538,7 +538,7 @@ future additions/reorderings then touch only their own line in the
 diff, and no line is a special case. Single-line calls take no
 trailing comma. Black/Ruff enforce exactly this, so leave them be.
 
-## Set comprehensions + model introspection (ingest.py's _RUN_COLUMNS)
+## Set comprehensions + model introspection (run_metadata.py's _RUN_COLUMNS)
 
 `{c.name for c in Run.__table__.columns} - {"run_number"}` stacks
 three things:
@@ -557,7 +557,7 @@ contract — a new Run column is automatically ingestable if the
 source query aliases its value to the column's name (that is why
 slow_controls' SQL says `lastsubrun + 1 AS number_subruns`).
 
-## Idempotent (ingest.py and every pipeline stage)
+## Idempotent (run_metadata.py and every pipeline stage)
 
 An operation is idempotent when running it once or N times leaves the
 same end state — repeats are always safe (math origin: f(f(x)) =
@@ -568,7 +568,7 @@ Why CalibrationNet insists on it everywhere (ingest, trap filter,
 fitting, seeds): "just re-run the command" becomes the universal
 recovery from any interruption — dead DB node, dropped tunnel, timed-
 out job — with no cleanup step. The subtle half: idempotence must not
-destroy downstream work; ingest.py's sync_segments keeps (and warns
+destroy downstream work; run_metadata.py's sync_segments keeps (and warns
 about) a segment that disappeared from the derivation but has
 analysis attached, rather than deleting it.
 
@@ -585,7 +585,7 @@ Given that freedom, files here read in newspaper order: the public
 entry point first (the story), helpers after, in the order the story
 mentions them.
 
-## `dict.get` vs `dict["key"]` (ingest.py, slow_controls.py)
+## `dict.get` vs `dict["key"]` (run_metadata.py, slow_controls.py)
 
 `data["key"]` raises KeyError when the key is missing; `data.get("key")`
 returns None instead (or a fallback: `data.get("key", 0)`). Choose by
@@ -613,3 +613,29 @@ data's location relative to the MODULE is fixed.
 Caveat: `parents[N]` hard-codes the module's depth in the tree — move
 the file a level and the anchor silently points elsewhere. Worth a
 comment on the line.
+
+## `defaultdict(set)` (board_channels.py)
+
+`set` is a built-in type (no import — that's why the file imports
+defaultdict but nothing for set). `defaultdict(factory)` calls the
+zero-argument factory to create a value for any MISSING key on first
+touch: `candidates[pixel].add(bc)` works immediately because the
+missing key triggers `set()`, installs the fresh empty set, and
+returns it; later hits get the existing set. One line accumulates
+"all board channels claimed by each pixel" — the structure the
+ambiguity check needs.
+
+Pass the callable, not a call: `defaultdict(set)` makes a NEW set per
+key; `defaultdict(set())` would be one shared (and non-callable)
+object — an error. Related idioms: defaultdict(list) for appending,
+defaultdict(int) for counting (int() == 0).
+
+## `set(some_dict)` takes the KEYS (board_channels.py's unknown-pixel gate)
+
+Iterating a dict yields its keys, so `set(d)` is the set of keys —
+`set(claimed) - set(found)` reads as "claimed minus found". `sorted()`
+on the result gives a deterministic, readable list for the error
+message (sets print in arbitrary order). `if unknown:` works because
+an empty list is falsy. The gate pattern: validate up front and raise
+with the exact culprits BEFORE writing anything, instead of letting a
+bare KeyError fire mid-write with no context.

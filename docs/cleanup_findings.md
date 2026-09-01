@@ -324,7 +324,7 @@ the folder convention names modules after the external system they
 read (cf. slow_controls.py), so: epics_controls.py.
 
 **Scope applied:** `git mv`; the one importer
-(calibrationnet/acquisition/ingest.py — import line + a docstring
+(calibrationnet/acquisition/run_metadata.py — import line + a docstring
 mention of MIN_DWELL); docstring/doc path mentions in
 calibrationnet/positions.py, README.md:157, docs/cleanup_plan.md
 (identifiers ruling + inventory row), docs/cleanup_findings.md (all
@@ -386,7 +386,7 @@ zero old-name leftovers repo-wide.
 
 ---
 
-## calibrationnet/acquisition/ingest.py — 2026-08-31 — done
+## calibrationnet/acquisition/run_metadata.py — 2026-08-31 — done
 
 ### Cleanup review
 
@@ -468,3 +468,65 @@ returns 254 pixels with 58/1058 unmapped; benchmark_fits --check-only
 green; zero "wiring" left in code outside migration history; trailing
 whitespace stripped; models/pixel.py and run_pixel.py re-verified
 (comment-only diffs, py_compile OK).
+
+---
+
+## calibrationnet/acquisition/ingest.py → run_metadata.py — 2026-08-31 — done
+
+### Module renamed (behavior-neutral, applied repo-wide)
+
+**Decision (AS, 2026-08-31):** the acquisition package's naming
+convention is nouns for modules (the domain/source: slow_controls,
+epics_controls, board_channels, waveforms, trap_filter,
+electronics_mapping), verbs for scripts (ingest_run,
+apply_trap_filter, ...). ingest.py was the one verb-named module,
+which made it read as "the generic ingest file" and made
+board_channels.py's ingestion look anomalous. Renamed to the noun
+run_metadata.py (runs.py rejected: confusably close to
+models/run.py; run_settings.py rejected: settings are the smallest
+slice of what it handles). Function names unchanged (ingest_run,
+derive_segments, sync_segments).
+
+**Scope applied:** `git mv`; both importers (scripts/ingest_run.py,
+scripts/offline/export_segments.py); path mentions in
+docs/cleanup_plan.md (inventory + dependency columns),
+docs/cleanup_findings.md (live pointers), docs/python_notes.md
+(entry headings). Historical docs untouched.
+
+**Follow-up in the same decision:** acquisition/__init__.py UNTICKED
+— AS is adding a module inventory to the package docstring (each
+module with its data source) so the per-source organization is
+visible at the package door.
+
+**Verified 2026-08-31:** zero leftover acquisition.ingest references;
+repo-wide py_compile; run_metadata imports clean; benchmark_fits
+--check-only green.
+
+---
+
+## calibrationnet/acquisition/board_channels.py — 2026-09-01 — done
+
+### Cleanup review
+
+**Behavior-neutral throughout:** variable renames applied
+consistently (bc_map -> board_channel_map incl. apply_bc_map's
+parameter — both callers pass it positionally, verified; channels ->
+board_channels; rp -> run_pixel; unknown -> unknown_pixels); the
+ambiguity print and all three ValueError messages byte-identical;
+returns unchanged; remaining code edits are formatting collapses.
+
+**Reordered per the definition-order ruling:** clean_bc_pairs ->
+read_bc_map -> apply_bc_map -> ingest_board_channels (was:
+ingest above apply, a violation).
+
+**Docstrings rewritten by AS; knowledge check:** all facts kept
+(pixel-0 catch-all, padding rows, pixel-58 multi-BC ambiguity,
+per-run-not-per-position so written to every segment, h5py-only,
+any-subrun-works). New content added: why BC maps are per-run while
+preamp/FET maps are per-pixel (change frequency), and the
+logic-vs-scripts commit split promoted to the module docstring.
+
+**Verified 2026-09-01:** py_compile; import + clean_bc_pairs logic
+smoke test (ambiguous and pixel-0 rows dropped as documented, with
+the expected report line); benchmark_fits --check-only green;
+trailing whitespace stripped; definition order compliant.

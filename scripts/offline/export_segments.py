@@ -17,7 +17,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from calibrationnet.acquisition.ingest import derive_segments
+from calibrationnet.acquisition.run_metadata import derive_segments
 from calibrationnet.acquisition.slow_controls import fetch_run
 
 
