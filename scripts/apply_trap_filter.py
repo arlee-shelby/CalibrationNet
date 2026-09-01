@@ -26,7 +26,7 @@ from calibrationnet.acquisition.trap_filter import (
 )
 from calibrationnet.acquisition.waveforms import (
     available_subruns,
-    find_subruns,
+    find_segment_subruns,
     save_filter_output,
     segment_energies,
     subrun_file,
@@ -86,7 +86,7 @@ def main() -> None:
             )
         mask_window = None
     else:
-        subruns = find_subruns(args.directory, args.run, *window,
+        subruns = find_segment_subruns(args.directory, args.run, *window,
                                wave_type=args.wave)
         mask_window = window
     print(f"using subruns {subruns[0]}-{subruns[-1]} "

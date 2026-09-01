@@ -345,13 +345,13 @@ and confirm the count equals the stored number_subruns.
 
 | file | imported/used by | risk class | done |
 |---|---|---|---|
-| `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine |   |
+| `calibrationnet/acquisition/__init__.py` | (nothing imports it — leaf) | engine | x |
 | `calibrationnet/acquisition/board_channels.py` | scripts/apply_trap_filter.py, scripts/ingest_board_channels.py | engine | x |
 | `calibrationnet/acquisition/run_metadata.py` | scripts/ingest_run.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/epics_controls.py` | calibrationnet/acquisition/run_metadata.py | engine | x |
 | `calibrationnet/acquisition/slow_controls.py` | calibrationnet/acquisition/run_metadata.py, scripts/offline/export_segments.py | engine | x |
 | `calibrationnet/acquisition/trap_filter.py` | scripts/apply_trap_filter.py, scripts/ingest_filter_output.py, scripts/offline/fit_spectra.py, scripts/offline/show_hitmap.py, scripts/offline/show_spectra.py, scripts/pending_segments.py | engine | x |
-| `calibrationnet/acquisition/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine |   |
+| `calibrationnet/acquisition/waveforms.py` | scripts/apply_trap_filter.py, scripts/offline/trap_filter.py | engine | x |
 | `calibrationnet/acquisition/electronics_mapping.py` | scripts/seed_pixels.py | engine | x |
 
 ### scripts/

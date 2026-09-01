@@ -160,19 +160,19 @@ def ingest_filter_output(session: Session,run_number: int,path,trap_falltime: Op
             "database — ingest the run first (scripts/ingest_run.py), which "
             "derives its segments.")
 
-    energy_per_pixel, skipped_rows = read_filter_output(path)
+    energies_per_pixel, skipped_rows = read_filter_output(path)
     if skipped_rows:
         print(f"note: skipped {skipped_rows} empty/NaN energy rows in {path}")
     # pixel 0 is the replay's catch-all for board channels with no pixel physically plugged in;
     # pixel 58 (and 1058) has no electronics
     for junk_pixel in (0, 58, 1058):
-        junk = energy_per_pixel.pop(junk_pixel, None)
+        junk = energies_per_pixel.pop(junk_pixel, None)
         if junk is not None:
             print(f"note: skipped pixel {junk_pixel} (junk channels, "
                   f"{len(junk)} waveforms)")
 
-    pixels = {pixel.pixel_number: pixel for pixel in session.scalars(select(Pixel).where(Pixel.pixel_number.in_(energy_per_pixel)))}
-    unknown_pixels = sorted(set(energy_per_pixel) - set(pixels))
+    pixels = {pixel.pixel_number: pixel for pixel in session.scalars(select(Pixel).where(Pixel.pixel_number.in_(energies_per_pixel)))}
+    unknown_pixels = sorted(set(energies_per_pixel) - set(pixels))
     if unknown_pixels:
         raise ValueError(f"File references pixels not in the database: "
                          f"{unknown_pixels[:10]}{'...' if len(unknown_pixels) > 10 else ''}")
@@ -180,7 +180,7 @@ def ingest_filter_output(session: Session,run_number: int,path,trap_falltime: Op
     run_pixels = {run_pixel.pixel_number: run_pixel for run_pixel in segment.run_pixels}
 
     filter_outputs = []
-    for pixel_number, pixel_energies in sorted(energy_per_pixel.items()):
+    for pixel_number, pixel_energies in sorted(energies_per_pixel.items()):
         pixel = pixels[pixel_number]
         run_pixel = run_pixels.get(pixel_number)
         if run_pixel is None:

@@ -627,3 +627,73 @@ optimization scans; trap_filter_outputs dominates database storage).
 **Verified 2026-09-01:** py_compile; parser round-trip smoke test
 (modern name -> all five keys; legacy name -> no falltime/run keys);
 benchmark_fits --check-only green; trailing whitespace stripped.
+
+---
+
+## calibrationnet/acquisition/waveforms.py — 2026-09-01 — done
+
+### Cleanup review
+
+**Behavior-neutral throughout.** Public renames, swept to all
+callers: subrun_span -> subrun_timespan (no external callers),
+find_subruns -> find_segment_subruns (scripts/apply_trap_filter.py
+and scripts/offline/trap_filter.py, 2 sites each — the assistant
+swept them plus the python_notes.md mentions). _headers ->
+_waves_and_headers (module-private). save_filter_output's parameter
+per_pixel -> energies_per_pixel (both callers positional). Internal
+renames (found -> subruns, stamps -> timestamps, cache ->
+subrun_start_timestamps, low/high -> low/high_subrun_index, etc.)
+consistent. Prints/errors byte-identical except the find_segment_
+subruns ValueError ("this segment's window ends" -> "the target end
+time" — recorded output change) and docstrings expanded (notably:
+segment_energies now documents the window=None hazard — without a
+window all waveforms in the passed subruns are included, i.e. the
+caller asserts single-position data).
+
+**Knowledge RELOCATED (AS decision): the lazy-dask rationale moved
+from the code comment to docs/cluster_resources.md** ("Why the trap
+filter needs so much memory"): filter the whole subrun and mask the
+ENERGIES, never the waveforms — boolean-indexing the lazy ~7.6 GB
+dask array forces an expensive rechunk; masking energies is free;
+only a segment's two edge subruns have anything masked. The doc
+previously POINTED at the comment; it now CONTAINS the rationale
+(pointer removed). The code comment keeps only the what.
+CROSS-REFERENCE: re-check that section when the docs prose pass
+reaches cluster_resources.md.
+
+**Accepted losses (durable here):** the binary-search scale
+illustration — "a dozen header reads instead of opening all 600-odd
+files" (the docstring now says "significantly"; for the record: 2026
+rastering runs reach ~900 subruns, e.g. run 9521 = 877, so the
+saving is ~10 probes vs hundreds of opens). The one-per-end
+over-include rationale was reworded but kept.
+
+**Also fixed during review:** epoch wording (ticks count since the
+unix epoch, not "the first unix timestamp"); segment/subrun mix-ups
+in the binary-search locals and comments; the stale
+"pipeline.trap_filter" reference (folder rename leftover) in
+save_filter_output's docstring.
+
+### trap_filter.py addendum (same sitting)
+
+energy_per_pixel -> energies_per_pixel applied consistently to match
+waveforms.py's vocabulary; AS's pass missed one site (the pixels
+dict comprehension) which would have raised NameError at runtime —
+caught in review, fixed, verified by import + py_compile.
+
+**Verified 2026-09-01:** py_compile (both modules + both driver
+scripts); all eight waveforms exports import; to_ticks epoch smoke
+check; benchmark_fits --check-only green; trailing whitespace
+stripped; definition order compliant.
+
+---
+
+## calibrationnet/acquisition/__init__.py — 2026-09-01 — done (re-opened 2026-08-31 for the module inventory, closed today)
+
+Docstring-only file. Re-ticked after AS added the per-module
+inventory (one line per module with its data source) — the
+package-door map decided alongside the run_metadata rename. The
+waveforms line states that module both reads waveforms AND applies
+the trap filter (the only nabPy module); the trap_filter line scoped
+to CSV ingestion. Verified: py_compile, live import (docstring
+present), benchmark green, no trailing whitespace.

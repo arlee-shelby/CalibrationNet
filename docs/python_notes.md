@@ -649,3 +649,49 @@ and ends. Use it in error/warning messages where the string itself is
 the evidence (a filename that failed to parse, an unexpected unit);
 plain {} for values merely being reported. Family: !s = str()
 (default), !r = repr(), !a = ascii().
+
+## `getattr(obj, name)()` — attribute access by string (waveforms.py)
+
+`getattr(f, "singleWaves")` is `f.singleWaves` with the attribute name
+coming from DATA (a string) instead of source code; a trailing ()
+calls the fetched method. Paired with a dict like
+`WAVE_ACCESSORS = {"singles": "singleWaves", ...}` it turns an
+if/elif chain into table-driven dispatch: adding a case is one dict
+entry, the dict documents the supported cases, and an unknown key
+fails loudly (KeyError). Related: nabPy is passed into helpers as a
+parameter (`nab`) so the expensive `import nabPy` happens once in the
+public functions — the module's lazy-import design.
+
+## Binary search + closures (waveforms.py's find_segment_subruns)
+
+Binary search: on a SORTED sequence, probe the middle, discard the
+half that can't contain the target, repeat — each step halves the
+candidates ("binary" = two), so ~600 items need ~10 probes. The
+sortedness precondition is why the docstring stresses "subruns are
+written in time order". Here each probe costs one h5 header read, so
+the halving is what makes segment lookup cheap.
+
+Nested functions / closures: a function defined inside another can
+read the enclosing call's local variables (a "closure"). find_segment_subruns
+nests start_timestamp (memoizes header reads in a local `cache` dict —
+shared by BOTH searches, start and end, so no header is read twice)
+and last_subrun_at_or_before_time (the binary search over the enclosed `subruns`).
+Nesting beats module-level helpers here because the shared state
+(cache, directory, run, wave type) would otherwise be threaded through
+every call; it also scopes the helpers to exactly the one computation
+that uses them.
+
+## `hasattr(x, "compute")` — duck-typed dask materialization (waveforms.py)
+
+Dask arrays are LAZY: operations build a recipe instead of computing,
+and `.compute()` executes the recipe (chunk by chunk) into a real
+numpy array. nabPy's waves are lazy (~7.6 GB/subrun recipes), so the
+filter's output may be lazy too — the `.compute()` call is where the
+actual reading+filtering work happens.
+
+`hasattr(obj, name)` asks "does obj have this attribute?" without
+erroring. `if hasattr(energies, "compute"): energies = energies.compute()`
+is duck typing: treat anything WITH a compute method as lazy and
+execute it, pass eager numpy arrays through untouched — robust to
+nabPy returning either, and it avoids importing dask just to do an
+isinstance check.

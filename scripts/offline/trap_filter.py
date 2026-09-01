@@ -28,7 +28,7 @@ from pathlib import Path
 
 from calibrationnet.acquisition.waveforms import (
     available_subruns,
-    find_subruns,
+    find_segment_subruns,
     save_filter_output,
     segment_energies,
     to_ticks,
@@ -107,7 +107,7 @@ def main() -> None:
                 span = "whole run" if not args.subruns else (
                     f"subruns {args.subruns[0]}..{args.subruns[1]}")
             else:
-                subruns = find_subruns(args.h5_dir, run,
+                subruns = find_segment_subruns(args.h5_dir, run,
                                        start_ticks, end_ticks,
                                        wave_type=args.wave)
                 window = (start_ticks, end_ticks)

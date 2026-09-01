@@ -28,10 +28,18 @@ it needs the GT-proven ~100 GB).
 
 ## Why the trap filter needs so much memory
 
-One subrun's waveforms form a **~7.6 GB lazy dask array** (see the
-comment in `calibrationnet/acquisition/waveforms.py`). "Lazy" means dask
-streams it in chunks rather than loading it whole, but the working set
-during `applyTrapFilter` still peaks at tens of GB. The proven sizing
+One subrun's waveforms form a **~7.6 GB lazy dask array**
+(`waves.waves()` in `calibrationnet/acquisition/waveforms.py`). "Lazy"
+means dask streams it in chunks rather than loading it whole, but the
+working set during `applyTrapFilter` still peaks at tens of GB.
+
+The laziness also dictates how `segment_energies` separates a segment
+from its neighbours: it filters the WHOLE subrun and applies the
+timestamp mask to the resulting energies, never to the waveforms —
+boolean-indexing the lazy waveform array would force an expensive
+dask rechunk, whereas masking the small energies array is free. (Only
+the two subruns at a segment's edges have anything masked off at
+all.) The proven sizing
 is the GT task's: **~24-32 CPUs and 100 GB, 4 h** per segment. Under
 that (NERSC shared at 4 CPUs ≈ 8 GB) the task is OOM-killed within
 minutes.
