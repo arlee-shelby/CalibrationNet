@@ -1,19 +1,22 @@
 """Store trap filter output CSVs (one row per pixel per file).
 
-Rise time / flat top come from the filename (rtNNN_ftNN, in 4 ns time
+Trap settings come from the filename (rtNNN_ftNN_fallNNNN, in 4 ns time
 bins); the run number comes from a RunNNNN_ filename prefix or --run; the
 segment comes from a segN filename component or --segment (default 0 —
-correct for every single-position run). Fall time is not encoded in all
-filenames; default 1250 (the standard nabPy setting is rise/flattop/fall
-= 1250/50/1250). Only ingest curated outputs — not the full optimization
-scan.
+correct for every single-position run). A legacy name without a fallNNNN
+component needs --falltime (the standard nabPy setting is
+rise/flattop/fall = 1250/50/1250); when the filename has one, --falltime
+may only confirm it — a mismatch is an error. Only ingest curated
+settings: every stored output is labeled with why it's stored, and
+that label is how analyses select outputs.
 
     # one file, explicit run (single-position run -> segment 0):
-    python scripts/ingest_filter_output.py filter_output_rt100_ft10.csv \\
-        --run 8622 --label comparison
-    # a whole folder of RunNNNN_-prefixed files:
+    python scripts/ingest_filter_output.py \\
+        filter_output_rt100_ft10_fall1250.csv --run 8622 --label comparison
+    # a whole folder of legacy RunNNNN_-prefixed files (no _fall in the
+    # names, so the fall time must be supplied):
     python scripts/ingest_filter_output.py nabPyStandardFilterOutputs/ \\
-        --label nabpy-standard
+        --falltime 1250 --label nabpy-standard
     # a CSV left behind by an apply_trap_filter.py task whose ingest step
     # failed (run and segment are parsed from the name):
     python scripts/ingest_filter_output.py \\
@@ -41,8 +44,11 @@ def main() -> None:
     parser.add_argument("--segment", type=int, default=None,
                         help="segment index (otherwise parsed from a segN "
                              "filename component; default 0)")
-    parser.add_argument("--falltime", type=float, default=1250,
-                        help="trap fall time in 4 ns bins (default 1250)")
+    parser.add_argument("--falltime", type=float, default=None,
+                        help="trap fall time in 4 ns bins — needed only "
+                             "for legacy filenames without a _fall "
+                             "component; if the filename has one, the "
+                             "two must agree")
     parser.add_argument("--label", default=None,
                         help='why this output is stored, e.g. "nabpy-standard"')
     args = parser.parse_args()

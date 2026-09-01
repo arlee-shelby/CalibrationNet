@@ -530,3 +530,100 @@ logic-vs-scripts commit split promoted to the module docstring.
 smoke test (ambiguous and pixel-0 rows dropped as documented, with
 the expected report line); benchmark_fits --check-only green;
 trailing whitespace stripped; definition order compliant.
+
+---
+
+## calibrationnet/acquisition/trap_filter.py — 2026-09-01 — ESCAPE-HATCH change, PRE-cleaning (development session)
+
+### Behavior change: fall time from the filename (AS decision 2026-09-01)
+
+Found while AS started cleaning: BOTH current writers
+(scripts/apply_trap_filter.py and scripts/offline/trap_filter.py)
+already encode `_fall{N}` in filter-output filenames, but
+parse_filter_filename ignored it and the module docstring claimed
+"fall time is not [encoded]" — stale. Consequences before the fix: the
+rescue path (scripts/ingest_filter_output.py) required the human to
+re-supply the fall time (--falltime defaulted to 1250 SILENTLY — a
+recovered non-1250 file would have been mislabeled), and offline
+consumers threw the encoded value away. The filename has two live
+roles: rescue record in the DB pipeline (files deleted on successful
+ingest), PRIMARY metadata in the offline pipeline (files persist).
+
+Changes (development session, before AS's cleaning of the file):
+
+1. parse_filter_filename: additionally captures an optional
+   `fall(\d+(?:\.\d+)?)` -> trap_falltime. Absent -> key absent
+   (legacy names stay distinguishable; never a silent default).
+2. ingest_filter_output(): trap_falltime now Optional[float]=None.
+   Resolution: filename value wins when present; caller value allowed
+   only to agree (mismatch -> ValueError) or to supply the fall for a
+   legacy name; neither present -> ValueError. Validation moved ABOVE
+   the segment lookup: all filename-derived checks run before any
+   database access.
+3. scripts/ingest_filter_output.py: --falltime default None (was
+   1250); now needed only for legacy names; docstring + examples
+   updated (legacy folder example shows --falltime 1250).
+4. Module docstring + parse docstring corrected (three settings
+   encoded; legacy caveat). Addendum same day: the stale
+   "optimization scan stays on disk" paragraph (module docstring) and
+   the matching phrase in scripts/ingest_filter_output.py replaced
+   with the live facts — curation-by-label policy + transient-CSV
+   lifecycle (deleted on successful ingest; persists only awaiting
+   rescue, or in the offline pipeline where files are the record).
+   Style/wording cleanup still AS's.
+
+Compatibility: parse result gains a key — all five call sites use
+.get()/specific keys, verified unaffected (offline
+fit_spectra/show_spectra/show_hitmap, ingest_filter_output.py,
+trap_filter.py itself). apply_trap_filter.py passes a falltime that
+always matches its own filename -> cross-check passes.
+
+**Verified 2026-09-01:** py_compile (trap_filter.py,
+ingest_filter_output.py, apply_trap_filter.py); parser round-trip
+(modern, offline, legacy, fractional-value names); LIVE error-path
+smoke against the DB via the rescue script — mismatch (fall1250 vs
+--falltime 999) and legacy-without---falltime both FAIL loudly with
+per-file rollback, nothing stored; benchmark_fits --check-only green.
+AS's behavior-neutral cleaning of the file follows this entry.
+
+---
+
+## calibrationnet/acquisition/trap_filter.py — 2026-09-01 — done (cleaning pass; follows the same-day escape-hatch entry above)
+
+### Cleanup review
+
+**Behavior-neutral except one recorded output change:** the
+parse-error hint now reads "(expected ex: filter_output_rt100_ft10_
+fall1250.csv)" — "e.g." -> "ex:" (AS's house style) and the example
+modernized to include _fall. All other prints and error strings
+byte-identical. Variable renames applied consistently (parsed ->
+parsed_filter_settings, done -> segments_with_filter_outputs,
+settings -> filter_settings, per_pixel -> energy_per_pixel, rp ->
+run_pixel, and friends); every function's PARAMETER names unchanged,
+so keyword callers unaffected. Signatures/calls collapsed to single
+lines (formatting only). Definition order was already compliant.
+
+**Docstrings substantially expanded by AS:** module docstring now
+carries the transient-CSV lifecycle, the offline-pipeline rationale
+(usable during database maintenance, ingest later), and the
+curation-by-label policy with its storage rationale (~500-setting
+optimization scans; trap_filter_outputs dominates database storage).
+
+**Accepted losses (recorded here as the durable home):**
+- The flush comment kept the mechanism (per-pixel flush so each
+  INSERT carries one energies array; a single batched INSERT can
+  reach hundreds of MB and the server closes the connection
+  mid-send; the module does not commit, so per-file all-or-nothing
+  is unchanged) but dropped the CONCRETE INCIDENT: run 9371
+  segment 5, 409 subruns — the batched statement grew to hundreds
+  of MB and the server dropped the connection mid-send
+  (2026-08-13/14 campaign). That evidence lives here now.
+- The junk-pixel comment kept "pixel 58 (and 1058) has no
+  electronics" but dropped the why-the-data-is-junk detail: what the
+  replay attributes to pixel 58 is an AGGREGATE OF JUNK BOARD
+  CHANNELS — none of it real detector data (the ambiguous multi-BC
+  mapping half of the story is in board_channels.py's docstring).
+
+**Verified 2026-09-01:** py_compile; parser round-trip smoke test
+(modern name -> all five keys; legacy name -> no falltime/run keys);
+benchmark_fits --check-only green; trailing whitespace stripped.

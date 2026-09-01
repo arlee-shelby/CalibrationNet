@@ -639,3 +639,13 @@ message (sets print in arbitrary order). `if unknown:` works because
 an empty list is falsy. The gate pattern: validate up front and raise
 with the exact culprits BEFORE writing anything, instead of letting a
 bare KeyError fire mid-write with no context.
+
+## `{name!r}` in f-strings (repr conversion)
+
+The `!r` conversion flag formats a value with repr() instead of str():
+strings come out QUOTED with invisible characters escaped
+('bad name\t.csv'), so the reader sees exactly where the value starts
+and ends. Use it in error/warning messages where the string itself is
+the evidence (a filename that failed to parse, an unexpected unit);
+plain {} for values merely being reported. Family: !s = str()
+(default), !r = repr(), !a = ascii().
