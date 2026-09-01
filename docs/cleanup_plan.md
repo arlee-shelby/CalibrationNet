@@ -313,7 +313,7 @@ and confirm the count equals the stored number_subruns.
 |---|---|---|---|
 | `calibrationnet/__init__.py` | (nothing imports it — leaf) | engine |   |
 | `calibrationnet/calibration.py` | calibrationnet/models/adc_peak.py, calibrationnet/models/run_pixel.py, calibrationnet/models/source.py, calibrationnet/models/trap_filter_output.py, scripts/calibrate.py, scripts/offline/calibrate.py | engine |   |
-| `calibrationnet/db.py` | calibrationnet/source_assignment.py, calibrationnet/queries.py, scripts/apply_trap_filter.py, scripts/assign_sources.py, scripts/benchmark_fits.py, scripts/calibrate.py, scripts/extract_adc_peaks.py, scripts/fit_spectra.py, scripts/ingest_board_channels.py, scripts/ingest_filter_output.py, scripts/ingest_run.py, scripts/low_gain_report.py, scripts/optimal_positions.py, scripts/pending_segments.py, scripts/process_run.py, scripts/seed_decay_energies.py, scripts/seed_pixels.py, scripts/seed_source_installations.py, scripts/seed_sources.py, scripts/show_hitmap.py | engine |   |
+| `calibrationnet/db.py` | calibrationnet/source_assignment.py, calibrationnet/queries.py, scripts/apply_trap_filter.py, scripts/assign_sources.py, scripts/benchmark_fits.py, scripts/calibrate.py, scripts/extract_adc_peaks.py, scripts/fit_spectra.py, scripts/ingest_board_channels.py, scripts/ingest_filter_output.py, scripts/ingest_run.py, scripts/low_gain_report.py, scripts/optimal_positions.py, scripts/pending_segments.py, scripts/plot_stored_fits.py, scripts/process_run.py, scripts/seed_decay_energies.py, scripts/seed_pixels.py, scripts/seed_source_installations.py, scripts/seed_sources.py, scripts/show_hitmap.py | engine | x |
 | `calibrationnet/fit_functions.py` | calibrationnet/fitting.py, calibrationnet/queries.py, scripts/benchmark_fits.py | FROZEN |   |
 | `calibrationnet/fit_functions_reference.py` | scripts/benchmark_fits.py | FROZEN |   |
 | `calibrationnet/fit_recipes.py` | calibrationnet/fitting.py, calibrationnet/queries.py, scripts/benchmark_fits.py, scripts/fit_spectra.py, scripts/low_gain_report.py, scripts/offline/calibrate.py, scripts/offline/fit_spectra.py | engine |   |
@@ -371,6 +371,7 @@ and confirm the count equals the stored number_subruns.
 | `scripts/low_gain_report.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/optimal_positions.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/pending_segments.py` | (nothing imports it — leaf) | driver |   |
+| `scripts/plot_stored_fits.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/process_run.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/seed_decay_energies.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/seed_pixels.py` | (nothing imports it — leaf) | driver |   |
@@ -381,6 +382,7 @@ and confirm the count equals the stored number_subruns.
 | `scripts/calibrate.sh` | (shell — called by AS on clusters) | driver |   |
 | `scripts/fit_spectra.sh` | (shell — called by AS on clusters) | driver |   |
 | `scripts/ingest_filter_outputs.sh` | (shell — called by AS on clusters) | driver |   |
+| `scripts/process_run.sh` | (shell — called by AS on clusters) | driver |   |
 | `scripts/setup_env.sh` | (shell — called by AS on clusters) | driver |   |
 | `scripts/submit_fit_spectra.sh` | (shell — called by AS on clusters) | driver |   |
 | `scripts/submit_trap_filter.sh` | (shell — called by AS on clusters) | driver |   |
@@ -390,6 +392,7 @@ and confirm the count equals the stored number_subruns.
 
 | file | imported/used by | risk class | done |
 |---|---|---|---|
+| `scripts/offline/README.md` | (docs — prose) | driver |   |
 | `scripts/offline/calibrate.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/offline/export_segments.py` | (nothing imports it — leaf) | driver |   |
 | `scripts/offline/fit_spectra.py` | (nothing imports it — leaf) | driver |   |

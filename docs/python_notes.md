@@ -695,3 +695,19 @@ is duck typing: treat anything WITH a compute method as lazy and
 execute it, pass eager numpy arrays through untouched — robust to
 nabPy returning either, and it avoids importing dask just to do an
 isinstance check.
+
+## `sessionmaker` — the session factory pattern (db.py)
+
+`sessionmaker(bind=engine)` does not create a session; it returns a
+factory — a callable that manufactures a new `Session` each time it
+is called, pre-configured with whatever was baked in (`bind=` the
+engine). Hence db.py's two-step:
+
+    factory = sessionmaker(bind=get_engine())  # build the machine
+    return factory()                           # run it once -> Session
+
+SQLAlchemy's intended shape is "configure once, stamp out many":
+idiomatic code makes ONE module-level factory and calls it
+everywhere. db.py instead rebuilds the factory inside every
+`get_session()` call — behaviorally identical (the factory is cheap;
+the expensive engine is cached by `@lru_cache`), just fully lazy.

@@ -1,7 +1,5 @@
-"""Engine and session setup, separate from the schema.
-
-Connection URL comes from the DATABASE_URL environment variable (or a .env
-file), e.g.:
+"""Engine and session setup, separate from the schema. The connection URL comes
+from the DATABASE_URL environment variable (or a .env file), ex:
 
     DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/calibrationnet
 
@@ -29,9 +27,7 @@ load_dotenv()
 def get_engine():
     url = os.environ.get("DATABASE_URL")
     if not url:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Put it in your environment or a .env file."
-        )
+        raise RuntimeError("DATABASE_URL is not set. Put it in your environment or a .env file.")
     return create_engine(url)
 
 
