@@ -25,7 +25,7 @@ never a conversion between conventions.
 from datetime import date
 from typing import Optional
 
-from .geometry import X_PITCH, Y_PITCH, physical_position
+from .geometry import HORIZONTAL_OFFSET, VERTICAL_OFFSET, detector_pixel_position
 
 LEGACY = "legacy-units"
 INCHES_2026 = "inches-2026"
@@ -34,14 +34,14 @@ INCHES_2026 = "inches-2026"
 INCHES_2026_START = date(2026, 7, 24)
 
 # 0.4 inch of stage travel moves the sources one pixel column, and a
-# column step is X_PITCH hex units.
-HEX_PER_INCH = X_PITCH / 0.4
+# column step is HORIZONTAL_OFFSET hex units.
+HEX_PER_INCH = HORIZONTAL_OFFSET / 0.4
 
 # Legacy horizontal "units": one unit moved the sources about one pixel
-# row (Y_PITCH hex units). The legacy scan spanned 1.7-3.7 units and the
+# row (VERTICAL_OFFSET hex units). The legacy scan spanned 1.7-3.7 units and the
 # 2026 scan spans -0.5..+0.5 inch over the same physical range, i.e. about
-# half an inch per legacy unit — consistent with Y_PITCH / HEX_PER_INCH.
-HEX_PER_LEGACY_UNIT = Y_PITCH
+# half an inch per legacy unit — consistent with VERTICAL_OFFSET / HEX_PER_INCH.
+HEX_PER_LEGACY_UNIT = VERTICAL_OFFSET
 
 CONVENTIONS = {
     LEGACY: {
@@ -193,7 +193,7 @@ def anchor_pixel_center(holder: str, convention: str, detector: str,
         detector, {}).get(slot)
     if not pixels:
         return None
-    points = [physical_position(p, detector) for p in pixels]
+    points = [detector_pixel_position(p, detector) for p in pixels]
     return (sum(x for x, _ in points) / len(points),
             sum(y for _, y in points) / len(points))
 

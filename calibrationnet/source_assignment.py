@@ -34,7 +34,7 @@ from statistics import median
 from sqlalchemy import func, select
 
 from .db import get_session
-from .geometry import physical_position
+from .geometry import detector_pixel_position
 from .models import Pixel, RunPixel, Source, SourceInstallation, TrapFilterOutput
 from .positions import anchor_for, predict_slot_position
 
@@ -77,7 +77,7 @@ def find_clusters(counts: dict, detector: str, n_clusters: int) -> list:
     """Greedy peak clustering of a {pixel(1-127): count} map. Returns up to
     n_clusters dicts (strongest first) with peak pixel, member pixels,
     total counts, and count-weighted centroid."""
-    positions = {p: physical_position(p, detector) for p in counts}
+    positions = {p: detector_pixel_position(p, detector) for p in counts}
     remaining = dict(counts)
     clusters = []
     for _ in range(n_clusters):
@@ -151,12 +151,12 @@ def excess_map(counts_det: dict, baseline_det: dict) -> dict:
 
 def support_at(peak_pixel: int, detector: str, excess: dict) -> int:
     """How many pixels within one ring of peak_pixel are also elevated."""
-    px, py = physical_position(peak_pixel, detector)
+    px, py = detector_pixel_position(peak_pixel, detector)
     return sum(
         1 for p, e in excess.items()
         if e >= SUPPORT_EXCESS
-        and math.hypot(physical_position(p, detector)[0] - px,
-                       physical_position(p, detector)[1] - py)
+        and math.hypot(detector_pixel_position(p, detector)[0] - px,
+                       detector_pixel_position(p, detector)[1] - py)
         <= SUPPORT_RADIUS
     )
 
@@ -191,7 +191,7 @@ def slot_offsets(holder: str, convention: str, detector: str,
     verified = anchor_for(holder, convention)["pixels"][detector]
 
     def center(pixels):
-        points = [physical_position(p, detector) for p in pixels]
+        points = [detector_pixel_position(p, detector) for p in pixels]
         return (sum(x for x, _ in points) / len(points),
                 sum(y for _, y in points) / len(points))
 
@@ -250,7 +250,7 @@ def refine_slot_offsets(excesses: dict, frames: dict, offsets_by_det: dict,
             if frame is None:
                 continue
             excess = excesses[k][det]
-            positions = {p: physical_position(p, det) for p in excess}
+            positions = {p: detector_pixel_position(p, det) for p in excess}
             for slot, (ox, oy) in offsets.items():
                 px, py = frame[0] + ox, frame[1] + oy
                 wsum = wx = wy = 0.0
@@ -303,7 +303,7 @@ def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
     Returns the position of the reference slot. The prior only penalises
     distance, so enough real evidence can move the frame well away from
     where the readback suggested."""
-    positions = {p: physical_position(p, detector) for p in excess}
+    positions = {p: detector_pixel_position(p, detector) for p in excess}
     best_t, best_score = prior, None
     nx, ny = int(window[0] / step), int(window[1] / step)
     for i in range(-nx, nx + 1):
@@ -516,7 +516,7 @@ def snap_to_cluster(pred: tuple, counts: dict, detector: str,
                     radius: float = VERIFY_RADIUS):
     """Snap a predicted position to the strongest pixel within radius.
     Returns (peak_pixel, centroid, distance) or None."""
-    positions = {p: physical_position(p, detector) for p in counts}
+    positions = {p: detector_pixel_position(p, detector) for p in counts}
     nearby = {
         p: c for p, c in counts.items()
         if math.hypot(positions[p][0] - pred[0], positions[p][1] - pred[1])
@@ -558,9 +558,9 @@ def snap_all(preds: dict, counts_det: dict, detector: str,
             break
         snapped[best_slot] = best
         pending.pop(best_slot)
-        px, py = physical_position(best[0], detector)
+        px, py = detector_pixel_position(best[0], detector)
         for p in list(remaining):
-            xx, yy = physical_position(p, detector)
+            xx, yy = detector_pixel_position(p, detector)
             if math.hypot(xx - px, yy - py) <= MEMBER_RADIUS:
                 remaining.pop(p)
     return snapped
@@ -573,7 +573,7 @@ def assign_from_preds(counts_det: dict, detector: str, slot_sources: dict,
     Returns rows of (slot, source_label, predicted, peak_pixel, snap_dist,
     members), where members maps pixel(1-127) to its distance from the
     source center. Each pixel goes to its nearest source only."""
-    positions = {p: physical_position(p, detector) for p in counts_det}
+    positions = {p: detector_pixel_position(p, detector) for p in counts_det}
     snapped = snap_all(preds, counts_det, detector, radius)
 
     centers, results = {}, []

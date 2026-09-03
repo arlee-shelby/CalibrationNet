@@ -53,7 +53,7 @@ from calibrationnet.db import get_session
 from calibrationnet.geometry import (
     HEX_ORIENTATION,
     HEX_RADIUS,
-    physical_position,
+    detector_pixel_position,
     pixel_positions,
     mirrored_x,
     ring_number,
@@ -104,7 +104,7 @@ def candidate_coverage(trend, offsets, lins, hors, boundary_hex):
         frame_y = cy[0] * lins + cy[1] * hors + cy[2]
         base = 1000 if det == "lower" else 0
         stored = np.arange(1, 128) + base
-        centers = np.array([physical_position(int(p), det) for p in stored])
+        centers = np.array([detector_pixel_position(int(p), det) for p in stored])
         best = np.full(len(stored), np.inf)
         for slot, (ox, oy) in offsets[det].items():
             dist = np.hypot(

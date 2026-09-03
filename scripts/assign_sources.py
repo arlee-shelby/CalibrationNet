@@ -28,7 +28,7 @@ import os
 from sqlalchemy import select
 
 from calibrationnet.db import get_session
-from calibrationnet.geometry import physical_position
+from calibrationnet.geometry import detector_pixel_position
 from calibrationnet.models import (
     Run,
     RunPixel,
@@ -262,23 +262,23 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
         offset = 1000 if det == "lower" else 0
         centers = []
         for r in group:
-            px, py = physical_position(int(r["peak_pixel"]), det)
+            px, py = detector_pixel_position(int(r["peak_pixel"]), det)
             ring = {
                 p: c for p, c in cmap.items()
-                if math.hypot(physical_position(p, det)[0] - px,
-                              physical_position(p, det)[1] - py)
+                if math.hypot(detector_pixel_position(p, det)[0] - px,
+                              detector_pixel_position(p, det)[1] - py)
                 <= MEMBER_RADIUS
             }
             total = sum(ring.values()) or 1
             centers.append((
                 r["source"],
-                (sum(physical_position(p, det)[0] * c
+                (sum(detector_pixel_position(p, det)[0] * c
                      for p, c in ring.items()) / total,
-                 sum(physical_position(p, det)[1] * c
+                 sum(detector_pixel_position(p, det)[1] * c
                      for p, c in ring.items()) / total),
             ))
         for p in cmap:
-            xx, yy = physical_position(p, det)
+            xx, yy = detector_pixel_position(p, det)
             best = None
             for source_label, (cx, cy) in centers:
                 d = math.hypot(xx - cx, yy - cy)

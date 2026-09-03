@@ -711,3 +711,54 @@ idiomatic code makes ONE module-level factory and calls it
 everywhere. db.py instead rebuilds the factory inside every
 `get_session()` call — behaviorally identical (the factory is cheap;
 the expensive engine is cached by `@lru_cache`), just fully lazy.
+
+## ALL_CAPS names — module-level constants (geometry.py)
+
+Python has no real constants (any name can be reassigned), so PEP 8
+uses a naming convention instead: a module-level value that is set
+once at import and never reassigned is written in UPPER_SNAKE_CASE
+(`HEX_RADIUS`, `COL_START`). Editors recognize the pattern and color
+such names as constants. They conventionally sit right after the
+imports, before any function that uses them — which also satisfies
+the "module-level executed code above its users" ordering rule.
+
+## Module-level precomputation as a cache (geometry.py `_UPPER`/`_LOWER`)
+
+Statements at module level run exactly ONCE, when the module is first
+imported; Python then caches the module object in `sys.modules`, so
+every later `import` reuses it without re-running the file. geometry.py
+exploits this: `_UPPER = pixel_positions()` and the mirrored `_LOWER`
+are built once per process, so `detector_pixel_position()` — called
+thousands of times inside frame-search loops — is a single dict
+lookup instead of rebuilding the 127-entry coordinate dict per call.
+The leading underscore marks them module-private (not part of the
+public API). Same mechanism as db.py's `load_dotenv()` running once.
+
+## BFS with frontier/seen sets (geometry.py `ring`, `ring_number`)
+
+    frontier = seen = {start}
+    for _ in range(n):
+        frontier = {q for r in frontier for q in neighbors(r)} - seen
+        seen = seen | frontier
+
+Breadth-first expansion: `frontier` is the set at the current
+distance, `seen` everything visited. The comprehension is nested
+for-loops ("each neighbor q of each frontier pixel r"); `- seen`
+drops backward/sideways steps so only the next ring survives; the
+union folds it into history. After n iterations frontier IS ring n.
+The chained assignment makes both names point to ONE set object —
+safe here because the loop only reassigns to newly built sets, never
+mutates in place. `ring_number` is the same loop as a `while` that
+counts steps until the target appears.
+
+## Truthiness — `if not next_ring:` (geometry.py)
+
+`set()` builds an empty set object (`{}` would be an empty DICT), not
+the value False. But in a boolean context every object is converted:
+empty collections (`set()`, `""`, `[]`, `{}`, `()`), `0`, `0.0`, and
+`None` are falsy; non-empty/non-zero are truthy. So `if not next_ring:`
+means "if the expansion produced nothing" — the idiomatic spelling of
+`if len(next_ring) == 0:`. Same rule powers db.py's `if not url:`
+(catches missing AND empty-string DATABASE_URL in one test). Note
+`next_ring == False` would NOT work — a set never equals a boolean;
+only the bool conversion applies truthiness.
