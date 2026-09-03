@@ -320,7 +320,7 @@ and confirm the count equals the stored number_subruns.
 | `calibrationnet/fitting.py` | scripts/fit_spectra.py, scripts/offline/fit_spectra.py | engine |   |
 | `calibrationnet/geometry.py` | calibrationnet/hitmap.py, calibrationnet/source_assignment.py, calibrationnet/positions.py, scripts/assign_sources.py, scripts/optimal_positions.py | engine | x |
 | `calibrationnet/hitmap.py` | scripts/offline/show_hitmap.py, scripts/show_hitmap.py | engine |   |
-| `calibrationnet/positions.py` | calibrationnet/acquisition/run_metadata.py, calibrationnet/source_assignment.py, scripts/optimal_positions.py | engine |   |
+| `calibrationnet/positions.py` | calibrationnet/acquisition/run_metadata.py, calibrationnet/source_assignment.py, scripts/optimal_positions.py | engine | x |
 | `calibrationnet/queries.py` | scripts/fit_spectra.py | engine |   |
 | `calibrationnet/source_assignment.py` | scripts/assign_sources.py, scripts/optimal_positions.py | engine |   |
 

@@ -56,7 +56,7 @@ _LOWER = {pixel: (mirrored_x(x), y) for pixel, (x, y) in _UPPER.items()}
 
 
 def detector_pixel_position(pixel_number: int, detector: str) -> tuple:
-    """Physical (x, y) of a pixel, in coordinates shared by both detectors,
+    """Physical (x, y) of a pixel's center, in coordinates shared by both detectors,
     i.e. where the lower detector is mirrored from the upper one, which is
     a property of the physical orientation of the installed detectors. Accepts
     either detector's numbering (1-127 or 1001-1127).

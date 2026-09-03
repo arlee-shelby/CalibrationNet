@@ -697,3 +697,56 @@ waveforms line states that module both reads waveforms AND applies
 the trap filter (the only nabPy module); the trap_filter line scoped
 to CSV ingestion. Verified: py_compile, live import (docstring
 present), benchmark green, no trailing whitespace.
+
+---
+
+## calibrationnet/positions.py — 2026-09-03 — ANALYSIS (development session), resolves the 9367 caveat
+
+### Where the INCHES_2026 constants come from (they are measured, not chosen)
+
+`hex_per_linear = 3.35`: slope of frame-x vs linear readback fitted
+over run 9370 (linear raster: 19 segments, 31.88->34.61 in — a
+2.73-inch lever, 110A field). The 2026-09-03 full-pool refit
+reproduces it (a=+3.341): the linear constant was always sound.
+`hex_per_horizontal = -3.90`: Delta(frame y)/Delta(horizontal)
+between runs 9326 and 9327 (same linear 33.502, horizontals -0.249
+vs -0.499) — a two-point, 0.25-inch-lever derivation. Units: the
+detector hex-grid coordinates of geometry.py (column spacing 1.5,
+row spacing sqrt(3)) per inch of stage readback.
+
+### Did run 9367 settle "field demagnifies vs biased fit"? YES — both, in parts
+
+The deleted development comment asked for a long-horizontal-lever
+run; 9367 IS one (horizontal raster: 11 segments sweeping +-0.485 in
+at two linear positions, 110A-exb0) — taken, ingested, never
+analyzed until now. Method: the assignment pipeline's own
+locate_all_frames over ALL pooled data (shared lower-detector
+slopes, per the rigid-tray ruling), plus a direct regression of
+9367's 11 fitted frames. Results (geometric HEX_PER_INCH = 3.750):
+
+| pool (field) | fitted linear a | fitted horizontal b |
+|---|---|---|
+| 2026 6-slot 110A-exb0 (9367's) | +3.341 | -4.433 |
+| 2026 6-slot 137A-exb2000 | +3.608 | -4.432 |
+| 2026 5-slot 137A-exb2000 | +3.642 | -4.653 |
+| 2025 legacy 137A-exb-1500 | +4.680 | -1.378 hex/unit (constant: 1.732) |
+
+Direct 9367 regression, lower detector: b = -4.412 hex/in (rms 0.37
+hex, 11 frames) — agrees with its pool. The upper-only fit gives
+-3.22: the same weak-upper bias the trend saga diagnosed
+(development_plan item 11), further confirming share-lower-slopes.
+
+Conclusions: (1) the -3.90 two-point fit WAS biased (~13% low in
+magnitude); (2) the field ALSO genuinely rescales, anisotropically
+and field-dependently (horizontal ~18% above geometric at
+exb0/exb2000 but ~20% below at 2025's exb-1500; linear the opposite
+direction) — which is WHY assignment pools never mix field epochs.
+
+Operational impact: NONE on stored data. The convention constants
+are only the round-1 prior; locate_all_frames round 2 refits the
+true trend from each pool's own data and relocates every frame, so
+all placements used the correct ~-4.4 slopes. Prior error over a
++-0.5 in lever is ~0.27 hex, well inside the locate window. DECISION
+(AS + dev session 2026-09-03): leave 3.35/-3.90 unchanged
+(behavior-neutral cleanup); update the comment from an open question
+to this answer, pointing here.
