@@ -87,7 +87,7 @@ rasters shifted each other's medians enough to move 524
 already-reviewed placements; the installation key replaced that same
 day as the general rule, verified to reproduce every pre-existing
 pool byte-identically. The field key —
-`source_assignment.field_key(run)`, e.g. `137/137A-exb2000` — captures
+`source_assignment.field_configuration_key(run)`, e.g. `137/137A-exb2000` — captures
 the magnet currents and ExB voltage (binned at 100 V, so residual
 readings of a few volts don't split pools), because the readback→frame
 mapping measurably depends on them (110 A → 137 A changed the

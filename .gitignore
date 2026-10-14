@@ -32,3 +32,6 @@ fit_plots_fall2025/
 fit_plots_fall2025_ldet/
 calibration_plots/fit_plots_*/
 calibration_plots_recovered/
+
+# per-file review folders for the prepared-draft cleanup method (docs/cleanup_plan.md, method v2)
+cleanup_review/

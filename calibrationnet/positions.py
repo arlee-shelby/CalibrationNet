@@ -18,10 +18,10 @@ was recorded in, so every run_segment stores its convention name:
 
 Nothing here assumes any convention's zero is the detector center. Source
 assignment only ever uses *displacements*. Each convention carries its own
-anchor, a run/segment whose source position and corresponding centered pixels were
+verified tray position, a run/segment whose source position and corresponding centered pixels were
 verified by eye. This is used during source assignment, where the pipeline attempts to determine which
 physical source was centered over a particular pixel for a given run/segment. A
-re-homing only requires a new anchor in the new convention, never a conversion between conventions.
+re-homing only requires a new verified position in the new convention, never a conversion between conventions.
 """
 
 from datetime import date
@@ -63,12 +63,12 @@ CONVENTIONS = {
 }
 
 # source holder geometry belongs to the physical tray, and a tray can be removed and re-installed
-# the source position is dependent on an anchor which is keyed by (holder, convention)
+# the source position is dependent on a verified tray position which is keyed by (holder, convention)
 #
-# re-installing a known tray under a convention it has no anchor for is an explicit gap:
+# re-installing a known tray under a convention it has no verified position for is an explicit gap:
 # the slot offsets carry over, but source assignment asks for a verified segment to pin the position rather than assume
 # previous mounting still applies
-ANCHORS = {
+VERIFIED_TRAY_POSITIONS = {
     ("5-slot", LEGACY): {
         "run_number": 8622,
         "segment_index": 0,
@@ -114,29 +114,29 @@ ANCHORS = {
 }
 
 
-def anchor_for(holder: str, convention: str) -> dict:
-    """Returns the verified anchor for a source holder under a specific RSIS motion unit convention.
+def verified_position_for(holder: str, convention: str) -> dict:
+    """Returns the verified tray position for a source holder under a specific RSIS motion unit convention.
 
     Raises an error, with an actionable message, when a known holder reappears under a
-    convention it has not been anchored in, i.e. the geometry is reusable, the
+    convention it has no verified position in, i.e. the geometry is reusable, the
     mounting position is not (this keeps the holder configuration fixed but allows for slight position
     changes between installations).
     """
-    anchor = ANCHORS.get((holder, convention))
-    if anchor is None:
-        known = sorted(h for h, c in ANCHORS if h == holder)
+    verified = VERIFIED_TRAY_POSITIONS.get((holder, convention))
+    if verified is None:
+        known = sorted(h for h, c in VERIFIED_TRAY_POSITIONS if h == holder)
         raise ValueError(
-            f"no anchor for holder {holder!r} under convention "
+            f"no verified position for holder {holder!r} under convention "
             f"{convention!r}. " + (
-                f"That tray is anchored under {known} — its slot geometry "
-                "carries over, but one segment's slot-to-pixel mapping must "
-                "be verified to pin where it is mounted now."
+                f"That tray has a verified position under {known} — its slot "
+                "geometry carries over, but one segment's slot-to-pixel "
+                "mapping must be verified to pin where it is mounted now."
                 if known else
-                "That tray has never been anchored: verify one segment's "
-                "slot-to-pixel mapping first."
-            ) + " Add it to calibrationnet.positions.ANCHORS."
+                "That tray has never had a position verified: verify one "
+                "segment's slot-to-pixel mapping first."
+            ) + " Add it to calibrationnet.positions.VERIFIED_TRAY_POSITIONS."
         )
-    return anchor
+    return verified
 
 
 def horizontal_limit(convention: str, linear: float):
@@ -157,12 +157,12 @@ def convention_for_date(when: date) -> str:
     return INCHES_2026 if when >= INCHES_2026_START else LEGACY
 
 
-def anchor_pixel_center(holder: str, convention: str, detector: str, slot: str):
-    """Returns the physical (x, y) position of a slot's center in this source holder's anchor run,
+def verified_slot_center(holder: str, convention: str, detector: str, slot: str):
+    """Returns the physical (x, y) position of a slot's center in this source holder's verified run,
     or None if that slot was not verified there. If a slot was centered over multiple pixels, its
-    center is taken to be the average of the centers of the pixels listed in the anchor.
+    center is taken to be the average of the centers of the pixels listed in the verified position.
     """
-    pixels = anchor_for(holder, convention)["pixels"].get(detector, {}).get(slot)
+    pixels = verified_position_for(holder, convention)["pixels"].get(detector, {}).get(slot)
     if not pixels:
         return None
     points = [detector_pixel_position(pixel, detector) for pixel in pixels]
@@ -171,14 +171,14 @@ def anchor_pixel_center(holder: str, convention: str, detector: str, slot: str):
 
 def predict_slot_position(holder: str, convention: str, detector: str,slot: str, linear: float, horizontal: float) -> Optional[tuple]:
     """Returns the predicted physical (x, y) of a slot at a supplied source position (linear + horizontal) for
-    a given convention. Returns None when the convention has no anchor for that slot, which should be
+    a given convention. Returns None when the convention has no verified position for that slot, which should be
     treated as "cannot predict" rather than as a position.
     """
     convention_specs = CONVENTIONS[convention]
-    anchor = anchor_for(holder, convention)
-    base = anchor_pixel_center(holder, convention, detector, slot)
+    verified = verified_position_for(holder, convention)
+    base = verified_slot_center(holder, convention, detector, slot)
     if base is None:
         return None
-    linear_difference = linear - anchor["linear_position"]
-    horizontal_difference = horizontal - anchor["horizontal_position"]
+    linear_difference = linear - verified["linear_position"]
+    horizontal_difference = horizontal - verified["horizontal_position"]
     return (base[0] + convention_specs["hex_per_linear"] * linear_difference, base[1] + convention_specs["hex_per_horizontal"] * horizontal_difference)

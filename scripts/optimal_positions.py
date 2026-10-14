@@ -61,11 +61,11 @@ from calibrationnet.geometry import (
 from calibrationnet.models import Run, RunSegment, SourceInstallation
 from calibrationnet.positions import horizontal_limit
 from calibrationnet.source_assignment import (
-    check_anchor_installation,
+    check_verified_installation,
     compute_baselines,
-    excess_map,
+    count_ratios,
     fetch_all_counts,
-    field_key,
+    field_configuration_key,
     installation_for,
     locate_all_frames,
     refine_slot_offsets,
@@ -89,7 +89,7 @@ def compress(numbers) -> str:
     return ",".join(spans)
 
 
-def candidate_coverage(trend, offsets, lins, hors, boundary_hex):
+def candidate_coverage(trend, offsets_by_detector, lins, hors, boundary_hex):
     """For every candidate readback position: which pixel each slot puts
     the source inside, per detector. Returns (cover, best_offset):
     cover[i] = {(det, slot): (pixel, offset_hex)} aligned with lins/hors;
@@ -99,17 +99,17 @@ def candidate_coverage(trend, offsets, lins, hors, boundary_hex):
     cover = [{} for _ in range(len(lins))]
     best_offset = {}
     for det in ("upper", "lower"):
-        cx, cy = trend[det]
-        frame_x = cx[0] * lins + cx[1] * hors + cx[2]
-        frame_y = cy[0] * lins + cy[1] * hors + cy[2]
+        x_coefficients, y_coefficients = trend[det]
+        frame_x = x_coefficients[0] * lins + x_coefficients[1] * hors + x_coefficients[2]
+        frame_y = y_coefficients[0] * lins + y_coefficients[1] * hors + y_coefficients[2]
         base = 1000 if det == "lower" else 0
         stored = np.arange(1, 128) + base
         centers = np.array([detector_pixel_position(int(p), det) for p in stored])
         best = np.full(len(stored), np.inf)
-        for slot, (ox, oy) in offsets[det].items():
+        for slot, (offset_x, offset_y) in offsets_by_detector[det].items():
             dist = np.hypot(
-                (frame_x + ox)[:, None] - centers[None, :, 0],
-                (frame_y + oy)[:, None] - centers[None, :, 1],
+                (frame_x + offset_x)[:, None] - centers[None, :, 0],
+                (frame_y + offset_y)[:, None] - centers[None, :, 1],
             )
             best = np.minimum(best, dist.min(axis=0))
             nearest = dist.argmin(axis=1)
@@ -377,25 +377,25 @@ def main() -> None:
                 f"--holder explicitly."
             )
 
-    counts = fetch_all_counts(args.label)
+    counts_by_segment = fetch_all_counts(args.label)
     with get_session() as session:
         segments = {(s.run_number, s.segment_index): s
                     for s in session.scalars(select(RunSegment))}
-        meta = {k: installation_for(session, segments[k]) for k in counts}
-        key_positions = {
+        meta = {k: installation_for(session, segments[k]) for k in counts_by_segment}
+        readback_positions = {
             k: (segments[k].linear_position, segments[k].horizontal_position)
-            for k in counts}
-        conventions = {k: segments[k].position_convention for k in counts}
+            for k in counts_by_segment}
+        conventions = {k: segments[k].position_convention for k in counts_by_segment}
         runs_by_number = {r.run_number: r for r in session.scalars(
             select(Run).where(Run.run_number.in_(
-                {k[0] for k in counts})))}
-    fields = {k: field_key(runs_by_number[k[0]]) for k in counts}
+                {k[0] for k in counts_by_segment})))}
+    fields = {k: field_configuration_key(runs_by_number[k[0]]) for k in counts_by_segment}
 
-    holders = {k: meta[k][1] for k in counts}
-    slot_maps = {k: meta[k][0] for k in counts}
-    installations = {k: meta[k][2] for k in counts}
-    keys = [k for k in sorted(counts)
-            if None not in key_positions[k] and holders[k] is not None]
+    holders = {k: meta[k][1] for k in counts_by_segment}
+    sources_by_segment = {k: meta[k][0] for k in counts_by_segment}
+    installations = {k: meta[k][2] for k in counts_by_segment}
+    keys = [k for k in sorted(counts_by_segment)
+            if None not in readback_positions[k] and holders[k] is not None]
 
     # Which (installation, holder, convention, field) pool to plan for.
     # A pool never mixes installations (a re-mounted tray can sit
@@ -449,16 +449,16 @@ def main() -> None:
     # The pool's anchor must come from the pool's own installation —
     # a re-mounted tray can sit differently.
     with get_session() as session:
-        check_anchor_installation(session, holder, convention, installation)
+        check_verified_installation(session, holder, convention, installation)
 
     # Same evidence preparation as assignment, restricted to this spec so
     # baselines stay within one bias/threshold epoch.
-    subset = {k: counts[k] for k in spec_keys}
-    baselines = compute_baselines(subset)
-    excesses = {k: {det: excess_map(counts[k][det], baselines[det])
+    subset = {k: counts_by_segment[k] for k in spec_keys}
+    baselines_by_detector = compute_baselines(subset)
+    ratios_by_segment = {k: {det: count_ratios(counts_by_segment[k][det], baselines_by_detector[det])
                     for det in ("upper", "lower")} for k in spec_keys}
-    offsets_by_det = {
-        det: slot_offsets(holder, convention, det, slot_maps[spec_keys[0]])
+    offsets_by_detector = {
+        det: slot_offsets(holder, convention, det, sources_by_segment[spec_keys[0]])
         for det in ("upper", "lower")
     }
 
@@ -468,18 +468,18 @@ def main() -> None:
     # centroids), then relocate the frames with the corrected geometry.
     rounds = 0 if args.no_refine else 2
     for _ in range(rounds):
-        offsets_for_locate = {spec + (det,): offsets_by_det[det]
+        offsets_by_conditions = {spec + (det,): offsets_by_detector[det]
                               for det in ("upper", "lower")}
         frames, trends = locate_all_frames(
-            excesses, key_positions, conventions, holders,
-            offsets_for_locate, fields=fields, installations=installations,
+            ratios_by_segment, readback_positions, conventions, holders,
+            offsets_by_conditions, fields=fields, installations=installations,
             share_slopes=not args.independent_trends)
-        offsets_by_det, refine_report = refine_slot_offsets(
-            excesses, frames, offsets_by_det, spec_keys)
-    offsets_for_locate = {spec + (det,): offsets_by_det[det]
+        offsets_by_detector, refine_report = refine_slot_offsets(
+            ratios_by_segment, frames, offsets_by_detector, spec_keys)
+    offsets_by_conditions = {spec + (det,): offsets_by_detector[det]
                           for det in ("upper", "lower")}
     _frames, trends = locate_all_frames(
-        excesses, key_positions, conventions, holders, offsets_for_locate,
+        ratios_by_segment, readback_positions, conventions, holders, offsets_by_conditions,
         fields=fields, installations=installations,
         share_slopes=not args.independent_trends)
     trend = trends[spec]
@@ -488,14 +488,14 @@ def main() -> None:
     if rounds:
         report("  slot offsets refined against the scanned segments "
                "(total correction vs anchor, hex):")
-        raw = {det: slot_offsets(holder, convention, det,
-                                 slot_maps[spec_keys[0]])
+        unrefined_offsets_by_detector = {det: slot_offsets(holder, convention, det,
+                                 sources_by_segment[spec_keys[0]])
                for det in ("upper", "lower")}
         for det in ("upper", "lower"):
             parts = []
-            for slot in sorted(offsets_by_det[det]):
-                dx = offsets_by_det[det][slot][0] - raw[det][slot][0]
-                dy = offsets_by_det[det][slot][1] - raw[det][slot][1]
+            for slot in sorted(offsets_by_detector[det]):
+                dx = offsets_by_detector[det][slot][0] - unrefined_offsets_by_detector[det][slot][0]
+                dy = offsets_by_detector[det][slot][1] - unrefined_offsets_by_detector[det][slot][1]
                 n = refine_report[det][slot][2]
                 parts.append(f"{slot} ({dx:+.2f},{dy:+.2f},n={n})")
             report(f"    {det}: " + "  ".join(parts))
@@ -507,47 +507,47 @@ def main() -> None:
     # narrows only what the plan tries to put over the pixels.
     if args.slots:
         wanted = set(args.slots)
-        known = set(offsets_by_det["upper"]) | set(offsets_by_det["lower"])
+        known = set(offsets_by_detector["upper"]) | set(offsets_by_detector["lower"])
         unknown = wanted - known
         if unknown:
             raise SystemExit(f"--slots {sorted(unknown)} not in this "
                              f"holder's slots {sorted(known)}")
-        offsets_by_det = {det: {slot: off
-                                for slot, off in offsets_by_det[det].items()
+        offsets_by_detector = {det: {slot: off
+                                for slot, off in offsets_by_detector[det].items()
                                 if slot in wanted}
                           for det in ("upper", "lower")}
         report(f"  coverage from slots {sorted(wanted)} only "
                "(--slots override)")
     elif args.isotope:
-        slot_map = slot_maps[spec_keys[0]]
-        wanted = {slot for slot, (_sid, label) in slot_map.items()
+        sources_by_slot = sources_by_segment[spec_keys[0]]
+        wanted = {slot for slot, (_sid, label) in sources_by_slot.items()
                   if label.startswith(args.isotope)}
         if not wanted:
             installed = {s: label for s, (_sid, label)
-                         in sorted(slot_map.items())}
+                         in sorted(sources_by_slot.items())}
             raise SystemExit(f"no slot of this installation holds a "
                              f"{args.isotope!r} source; installed: "
                              f"{installed}")
-        offsets_by_det = {det: {slot: off
-                                for slot, off in offsets_by_det[det].items()
+        offsets_by_detector = {det: {slot: off
+                                for slot, off in offsets_by_detector[det].items()
                                 if slot in wanted}
                           for det in ("upper", "lower")}
         report(f"  coverage from {args.isotope} slots only: "
                f"{', '.join(sorted(wanted))}")
 
     for det in ("upper", "lower"):
-        cx, cy = trend[det]
-        report(f"  {det}: d(x)/d(linear) = {cx[0]:+.2f} hex/inch, "
-               f"d(y)/d(horizontal) = {cy[1]:+.2f} hex/inch "
-               f"(cross terms {cx[1]:+.2f}, {cy[0]:+.2f})")
+        x_coefficients, y_coefficients = trend[det]
+        report(f"  {det}: d(x)/d(linear) = {x_coefficients[0]:+.2f} hex/inch, "
+               f"d(y)/d(horizontal) = {y_coefficients[1]:+.2f} hex/inch "
+               f"(cross terms {x_coefficients[1]:+.2f}, {y_coefficients[0]:+.2f})")
 
     # The physically allowed readback range: exactly what the scan data
     # actually used — anything beyond it is not known to be reachable, so
     # the plan never proposes it.
-    lin_lo = min(key_positions[k][0] for k in spec_keys)
-    lin_hi = max(key_positions[k][0] for k in spec_keys)
-    hor_lo = min(key_positions[k][1] for k in spec_keys)
-    hor_hi = max(key_positions[k][1] for k in spec_keys)
+    lin_lo = min(readback_positions[k][0] for k in spec_keys)
+    lin_hi = max(readback_positions[k][0] for k in spec_keys)
+    hor_lo = min(readback_positions[k][1] for k in spec_keys)
+    hor_hi = max(readback_positions[k][1] for k in spec_keys)
     report(f"  allowed range (from the data): "
            f"linear {lin_lo:.2f}..{lin_hi:.2f}, "
            f"horizontal {hor_lo:+.2f}..{hor_hi:+.2f}")
@@ -593,7 +593,7 @@ def main() -> None:
     boundary_hex = args.boundary_mm / MM_PER_HEX
 
     cover, best_offset = candidate_coverage(
-        trend, offsets_by_det, lins, hors, boundary_hex)
+        trend, offsets_by_detector, lins, hors, boundary_hex)
     if excluded:
         report(f"  excluding rings >= {args.exclude_rings} from pixel 64: "
                f"{len(excluded)} pixels dropped per detector")

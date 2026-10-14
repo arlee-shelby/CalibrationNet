@@ -762,3 +762,84 @@ means "if the expansion produced nothing" — the idiomatic spelling of
 (catches missing AND empty-string DATABASE_URL in one test). Note
 `next_ring == False` would NOT work — a set never equals a boolean;
 only the bool conversion applies truthiness.
+
+## `:g` format spec — compact floats (source_assignment.py field_configuration_key)
+
+In an f-string, the part after the colon is a format spec. `g`
+("general") renders a float in its shortest clean form: trailing
+zeros and a bare decimal point are stripped (`f"{137.0:g}"` ->
+'137'), real decimals are kept ('137.5'), and very large/small
+values switch to scientific notation ('1.2e-06'). Compare `:f`
+(fixed-point, '137.000000') and the default str() ('137.0').
+Load-bearing in field_configuration_key: pool keys are compared as STRINGS, so
+'137' vs '137.0' would silently split a pool. round(x, n) returns a
+float when n is given — :g is what keeps the .0 out of the key.
+
+## `sum(x for x, _ in points) / len(points)` — a mean over one coordinate (source_assignment.py, `center` inside slot_offsets)
+
+Three constructs stacked in one line:
+
+```python
+points = [(5.25, 3.46), (3.75, 2.60)]      # a list of (x, y) tuples
+
+for x, _ in points:                         # 1. tuple unpacking in a loop:
+    ...                                     #    each (x, y) is split into two names
+
+sum(x for x, _ in points)                   # 2. a generator expression: like a list
+                                            #    comprehension without the [ ], fed
+                                            #    straight into sum() — no list is built
+sum(x for x, _ in points) / len(points)     # 3. total / count = the arithmetic mean
+# -> (5.25 + 3.75) / 2 = 4.5
+```
+
+1. `for x, _ in points` takes one tuple per turn and unpacks it into
+   `x` and `_`. The underscore is an ordinary variable name that Python
+   programmers use for "I have to receive this value but I will not use
+   it" (here the y coordinate while summing x). It is a convention, not
+   syntax: `for x, y_unused in points` would behave identically.
+2. `sum(... for ... in ...)` with no brackets is a generator expression:
+   the values are produced one at a time and consumed by `sum` as they
+   appear. `sum([x for x, _ in points])` would give the same number but
+   build a throwaway list first.
+3. Dividing by `len(points)` turns the total into a mean. Doing it once
+   for x and once for y gives the mean position, i.e. the centroid of
+   the points with equal weights.
+
+In `center`, `points` are the hex-grid centers of the pixels listed for
+one slot in VERIFIED_TRAY_POSITIONS. With one pixel the mean IS that
+pixel's center; with two (ex: R2C3 verified as [67, 80]) it is the
+midpoint between the two pixel centers, i.e. the source was judged to
+sit on their shared boundary. Compare `match_to_cluster`'s centroid,
+which is the same idea with each pixel weighted by its count ratio.
+
+## `np.linalg.lstsq(A, b, rcond=None)[0]` — fitting a straight grid through a few measured points (source_assignment.py, slot_offsets)
+
+`lstsq` answers: "which numbers make `A @ numbers` come closest to `b`,
+when there are more measurements than numbers?" It returns four things
+(the numbers, the leftover misfit, a rank, singular values); `[0]`
+keeps just the numbers. `rcond=None` means "use numpy's default
+tolerance" and silences a deprecation warning — nothing more.
+
+In slot_offsets the unknowns are three numbers per axis describing the
+tray's slot grid as seen on the detector face, in hex units (1 hex unit
+= one pixel center-to-corner radius = 5.2 mm):
+
+```python
+# one row of A per eye-verified slot: [1, column, row]; one entry of b per slot: its measured x
+A = [[1, 2, 1],   # R1C2 at x = 3.75
+     [1, 3, 1],   # R1C3 at x = 3.75
+     [1, 1, 2],   # R2C1 at x = -0.75
+     [1, 2, 2],   # R2C2 at x = -2.25
+     [1, 3, 2]]   # R2C3 at x = -0.75
+origin, per_column, per_row = np.linalg.lstsq(A, b, rcond=None)[0]
+# -> 8.75, 0.0, -5.0  : start at x = 8.75, add 0.0 per column, add -5.0 per row
+# so any slot's x = 8.75 + 0.0 * column - 5.0 * row  (R1C1, never verified: 8.75 - 5.0 = 3.75)
+```
+
+Five measurements, three unknowns: no choice of numbers hits all five
+exactly, so the solver picks the grid whose misfits are smallest
+overall. Here the row-2 misfits are 0.5, -1.0 and 0.5 hex (2.6 mm,
+5.2 mm, 2.6 mm): the eye-verification put each source at a pixel
+CENTER, so each verified point is off its true spot by up to a pixel
+radius — this is the "pixel-centering error" that refine_slot_offsets
+later measures from the counts and corrects.

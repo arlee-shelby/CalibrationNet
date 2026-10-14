@@ -1,30 +1,28 @@
-"""Work out which calibration source sat over which pixel, per run segment.
+"""The aim of this module is to try and predict which physical calibration source sat over
+which pixel, per run segment.
 
-Physical coordinates come from calibrationnet.geometry: upper-detector
-pixels use the hit-map coordinates, lower-detector pixels are mirrored
-across the vertical center line (the detectors face each other), so one
-physical source location maps to the same (x, y) on both.
+The physical detector pixel coordinates come from calibrationnet.geometry, where the lower detector
+pixels are mirrored across the vertical center line compared to the upper one (i.e. the detectors face
+each other), so a single source position maps to the same (x, y) on both detectors.
 
-The method, in the order the evidence is trusted:
+The method, in the order the information is constructed and trusted:
 
-1. Geometry proposes. The source frame is rigid, so the offsets between
-   its slots are fixed and known; only the frame's position moves. The
-   readback position gives a prior for where the frame is, via that
-   segment's own position convention (calibrationnet.positions) — always
-   as a displacement from a verified anchor, never assuming any
-   convention's zero is the detector center.
+1. Source holder tray geometry: the source frame is rigid, so the offsets between
+   its slots are fixed and known, only the frame's position moves. The position conventions
+   (see calibrationnet.positions) provide starting values for the unit conversion between the
+   recorded physical position and a pixel hex unit to track centered pixels as the source position
+   changes. The convention's "zero" is never assumed to be the detector center.
 
-2. Counts decide. For each segment the whole frame is placed by the
-   single translation that best explains the excess counts under ALL its
-   slots at once. One noisy pixel cannot drag the frame, because it would
-   need four or five accomplices in rigid formation; a genuine
-   multi-column move wins easily because that much real evidence
-   outweighs the prior.
+2. Counts: for each segment the whole frame is placed by the
+   single translation that best explains the counts under all its
+   slots at once, i.e. one noisy pixel cannot drag the frame, because it would
+   need four or five accomplices in rigid formation.
 
-3. Evidence is per-pixel relative. A pixel's counts are compared to that
-   pixel's own median across all segments, so a chronically hot low-gain
-   channel looks ordinary and a real source stands out. A lone spike with
-   no elevated neighbours is discounted: real sources light up a cluster.
+3. The signal is per-pixel relative: a pixel's counts are compared to that
+   pixel's own median across all segments, so a chronically low-gain
+   channel (which can have a significantly larger number of counts) looks ordinary and
+   a real physical source stands out. A lone spike with no elevated neighbours is discounted, i.e.
+   real sources light up a cluster of pixels.
 """
 
 import math
@@ -35,27 +33,34 @@ from sqlalchemy import func, select
 
 from .db import get_session
 from .geometry import detector_pixel_position
-from .models import Pixel, RunPixel, Source, SourceInstallation, TrapFilterOutput
-from .positions import anchor_for, predict_slot_position
+from .models import (Pixel, RunPixel, RunSegment, Source, SourceInstallation, TrapFilterOutput)
+from .positions import predict_slot_position, verified_position_for
 
-# Hex centers: adjacent pixels are sqrt(3) apart.
-PIXEL_PITCH = math.sqrt(3)
-# Pixels within one ring of a source's center belong to that source.
-MEMBER_RADIUS = 1.1 * PIXEL_PITCH
-# Verification may only move a placement less than a column pitch, so it
-# can never silently swap to the neighbouring source's cluster.
-VERIFY_RADIUS = 1.0
-# One pixel can only testify so loudly, however hot it is.
-EXCESS_CAP = 30.0
-# A real source elevates its neighbourhood; a junk burst does not.
-SUPPORT_RADIUS = 2.0
-SUPPORT_EXCESS = 2.0
+# all distances defined below are in the hex-grid units of calibrationnet/geometry.py
+# (1 unit = one pixel center-to-corner radius)
+
+# any two touching pixels are sqrt(3) units apart, adjacent columns are 1.5 units apart
+ADJACENT_PIXEL_DISTANCE = math.sqrt(3)
+# pixels within one ring of a source's center belong to that source (1.1 = center-to-corner radius + 10%)
+MEMBER_RADIUS = 1.1 * ADJACENT_PIXEL_DISTANCE
+# the measured counts may only move a source frame placement less than a column from the predicted position
+# prevents counts from silently allowing the source to be positioned over a neighbouring source's cluster
+VERIFY_RADIUS = 1.0   # less than column spacing (1.5 units apart)
+# the ratio of a pixel's count to its own baseline is capped so one very noisy pixel cannot outweigh a cluster
+ILLUMINATED_RATIO_CAP = 30.0
+# a real source elevates a collection of pixels: a candidate position needs at least two pixels within
+# ILLUMINATED_RADIUS whose count ratio reaches ILLUMINATED_RATIO, otherwise the candidate is
+# discounted by LONE_SPIKE_FACTOR
+ILLUMINATED_RADIUS = 2.0
+ILLUMINATED_RATIO = 2.0
 LONE_SPIKE_FACTOR = 0.15
 
 
 def fetch_all_counts(label: str = "nabpy-standard") -> dict:
-    """{(run_number, segment_index): {detector: {pixel(1-127): count}}}
-    without pulling any energy arrays."""
+    """Returns counts_by_segment = {segment_id: {detector: counts}}, where segment_id is
+    (run_number, segment_index) and counts = {pixel(1-127): count}, for all the trap filter outputs
+    with a specified label. Does not pull any actual energy arrays, just their length.
+    """
     with get_session() as session:
         rows = session.execute(
             select(RunPixel.run_number, RunPixel.segment_index,
@@ -66,269 +71,269 @@ def fetch_all_counts(label: str = "nabpy-standard") -> dict:
                   TrapFilterOutput.run_pixel_id == RunPixel.id)
             .where(TrapFilterOutput.label == label)
         ).all()
-    counts = defaultdict(lambda: defaultdict(dict))
+    counts_by_segment = defaultdict(lambda: defaultdict(dict))
     for run_number, segment_index, detector, pixel_number, count in rows:
-        counts[(run_number, segment_index)][detector][
-            pixel_number % 1000] = count or 0
-    return {k: dict(v) for k, v in counts.items()}
-
-
-def find_clusters(counts: dict, detector: str, n_clusters: int) -> list:
-    """Greedy peak clustering of a {pixel(1-127): count} map. Returns up to
-    n_clusters dicts (strongest first) with peak pixel, member pixels,
-    total counts, and count-weighted centroid."""
-    positions = {p: detector_pixel_position(p, detector) for p in counts}
-    remaining = dict(counts)
-    clusters = []
-    for _ in range(n_clusters):
-        if not remaining:
-            break
-        peak = max(remaining, key=remaining.get)
-        px, py = positions[peak]
-        members = {
-            p: c for p, c in remaining.items()
-            if math.hypot(positions[p][0] - px, positions[p][1] - py)
-            <= 2.1 * PIXEL_PITCH
-        }
-        total = sum(members.values())
-        if total == 0:
-            break
-        clusters.append({
-            "peak": peak,
-            "members": members,
-            "counts": total,
-            "centroid": (
-                sum(positions[p][0] * c for p, c in members.items()) / total,
-                sum(positions[p][1] * c for p, c in members.items()) / total,
-            ),
-        })
-        for p in members:
-            remaining.pop(p)
-    return clusters
+        counts_by_segment[(run_number, segment_index)][detector][pixel_number % 1000] = count or 0
+    
+    counts_by_segment = {segment_id: dict(counts_by_detector) for segment_id, counts_by_detector in counts_by_segment.items()}
+    return counts_by_segment
 
 
 # --------------------------------------------------------------------------
-# Evidence: counts relative to each pixel's own baseline.
+# The signal is per-pixel relative: counts relative to each pixel's own baseline
 
-def field_key(run) -> str:
-    """The run's field configuration as a compact pool key: magnet
-    currents and ExB voltage, rounded to setting precision. The
-    readback -> frame mapping depends on these (measured going
-    110 A/ExB 0 -> 137 A/ExB 2 kV: horizontal scale changed ~5% and the
-    upper-detector shear vanished), so trends and baselines must never
-    pool across field configurations."""
-    def fmt(value, ndigits=0):
+def field_configuration_key(run) -> str:
+    """Returns the run field configuration as a single compact key, i.e. magnet
+    currents (MAIN and UDET) and ExB voltage, rounded to setting precision. The
+    source frame mapping depends on these values, trends and baselines must never be
+    grouped across field configurations.
+    """
+    def format_value(value, ndigits=0):
         if value is None:
             return "?"
-        return f"{round(value, ndigits):g}"
-    # ExB bins at 100 V: residual readings of a few volts are "off"
-    # (run 9326 idled at ~10 V beside 9327's 0 V — same configuration),
-    # while the meaningful states differ by hundreds to thousands of
-    # volts (0 / -1500 / +2000 so far).
-    return (f"{fmt(run.main)}/{fmt(run.udet)}A"
-            f"-exb{fmt(run.exb, -2)}")
+        formatted_value = f"{round(value, ndigits):g}"
+        return formatted_value
+    configuration_key = f"{format_value(run.main)}/{format_value(run.udet)}A-exb{format_value(run.exb, -2)}"
+    return configuration_key
 
 
-def compute_baselines(counts: dict) -> dict:
-    """{detector: {pixel(1-127): median count across segments}} — a pixel's
-    intrinsic rate, including noise and gain artefacts. A source only
-    visits any given pixel in a few segments, so the median is
-    essentially source-free."""
-    per_pixel = {"upper": defaultdict(list), "lower": defaultdict(list)}
-    for dets in counts.values():
-        for detector, pixels in dets.items():
-            for pixel, count in pixels.items():
-                per_pixel[detector][pixel].append(count)
-    return {det: {p: max(median(v), 1.0) for p, v in pixels.items()}
-            for det, pixels in per_pixel.items()}
+def compute_baselines(counts_by_segment: dict) -> dict:
+    """Returns baselines_by_detector = {detector: baselines}, baselines = {pixel(1-127): median count
+    across the segments in counts_by_segment}, a pixel's baseline rate. A source only visits any given 
+    pixel a few times across many runs and segments, so the median is essentially the non-centered or 
+    source-free baseline measurement.
+    """
+
+    counts_per_pixel = {"upper": defaultdict(list), "lower": defaultdict(list)}
+    for counts_by_detector in counts_by_segment.values():
+        for detector, counts in counts_by_detector.items():
+            for pixel, count in counts.items():
+                counts_per_pixel[detector][pixel].append(count)
+
+    baselines_by_detector = {}
+    for detector, pixels in counts_per_pixel.items():
+        baselines_by_detector[detector] = {}
+        for pixel, counts_across_segments in pixels.items():
+            baselines_by_detector[detector][pixel] = max(median(counts_across_segments), 1.0)
+    return baselines_by_detector
 
 
-def excess_map(counts_det: dict, baseline_det: dict) -> dict:
-    """Count / that pixel's own baseline. Above ~2 means a source is
-    probably there, whatever the pixel's absolute rate."""
-    return {p: c / baseline_det.get(p, 1.0) for p, c in counts_det.items()}
+def count_ratios(counts: dict, baselines: dict) -> dict:
+    """Returns ratios = {pixel(1-127): count / pixel's baseline} for one detector of one
+    segment. Above ~2 means a source is probably there.
+    """
+    ratios = {pixel: count / baselines.get(pixel, 1.0) for pixel, count in counts.items()}
+    return ratios
 
 
-def support_at(peak_pixel: int, detector: str, excess: dict) -> int:
-    """How many pixels within one ring of peak_pixel are also elevated."""
-    px, py = detector_pixel_position(peak_pixel, detector)
-    return sum(
-        1 for p, e in excess.items()
-        if e >= SUPPORT_EXCESS
-        and math.hypot(detector_pixel_position(p, detector)[0] - px,
-                       detector_pixel_position(p, detector)[1] - py)
-        <= SUPPORT_RADIUS
-    )
+def illuminated_neighbor_number(peak_pixel: int, detector: str, ratios: dict) -> int:
+    """Returns illuminated_neighbors, how many pixels within one ring of the peak_pixel have
+    elevated counts with a ratio of at least ILLUMINATED_RATIO (the peak itself counts when
+    it is elevated).
+    """
+    x0, y0 = detector_pixel_position(peak_pixel, detector)
+    illuminated_neighbors = 0
+    for pixel, ratio in ratios.items():
+        if ratio < ILLUMINATED_RATIO:
+            # not elevated enough above baseline, probably not centered
+            continue
+        pixel_x, pixel_y = detector_pixel_position(pixel, detector)
+        if math.hypot(pixel_x - x0, pixel_y - y0) <= ILLUMINATED_RADIUS:
+            illuminated_neighbors += 1
+    return illuminated_neighbors
 
 
-def _evidence(pos, excess: dict, positions: dict) -> float:
-    """Strength of source evidence at a position: the best
-    distance-weighted excess within VERIFY_RADIUS, capped, and heavily
-    discounted when nothing around it is elevated."""
-    best = 0.0
-    support = 0
-    for p, (x, y) in positions.items():
-        d = math.hypot(x - pos[0], y - pos[1])
-        if d <= VERIFY_RADIUS:
-            best = max(best, min(excess[p], EXCESS_CAP) / (1.0 + d))
-        if d <= SUPPORT_RADIUS and excess[p] >= SUPPORT_EXCESS:
-            support += 1
-    return best if support >= 2 else best * LONE_SPIKE_FACTOR
+def _signal_strength_at(slot_position: tuple, ratios: dict, pixel_positions: dict) -> float:
+    """Returns signal_strength, how strongly the counts say a source is centered at
+    slot_position. The strength metric is defined to be the largest count ratio, among the 
+    pixels withing VERIFY_RADIUS of slot_position, weighted by the distance between the slot and pixel
+    position. Each ratio is capped at ILLUMINATED_RATIO_CAP so one very noisy pixel cannot
+    dominate.
+
+    A pixel exactly at slot_position contributes at full strength, one at the edge of
+    VERIFY_RADIUS at about half (the 1/(1 + distance) weight). If fewer than two pixels within
+    ILLUMINATED_RADIUS are elevated (ratio >= ILLUMINATED_RATIO) the strength is discounted by
+    LONE_SPIKE_FACTOR, since a real source lights up a cluster of pixels and a noise burst lights
+    up one. Used by locate_frame, which sums log1p(signal_strength) over all of the frame's
+    slots for each candidate position.
+    """
+    signal_strength = 0.0
+    illuminated_neighbors = 0
+    for pixel, (pixel_x, pixel_y) in pixel_positions.items():
+        distance = math.hypot(pixel_x - slot_position[0], pixel_y - slot_position[1])
+        if distance <= VERIFY_RADIUS:
+            signal_strength = max(signal_strength, min(ratios[pixel], ILLUMINATED_RATIO_CAP) / (1.0 + distance))
+        if distance <= ILLUMINATED_RADIUS and ratios[pixel] >= ILLUMINATED_RATIO:
+            illuminated_neighbors += 1
+    # a lone spike, i.e. fewer than two illuminated pixels around the point, is discounted
+    if illuminated_neighbors < 2:
+        signal_strength *= LONE_SPIKE_FACTOR
+    return signal_strength
 
 
 # --------------------------------------------------------------------------
-# The rigid frame: slot offsets, and locating it in one segment.
+# The rigid frame: slot offsets, and locating the frame in one segment
 
-def slot_offsets(holder: str, convention: str, detector: str,
-                 slots) -> dict:
-    """{slot: (dx, dy)} of each slot relative to the frame's reference
-    slot, in hex units.
+def _reference_slot(centers: dict) -> str:
+    """Returns reference_slot, the slot other slots are measured from, and is taken
+    to be the lowest slot label present.
+    """
+    reference_slot = sorted(centers)[0]
+    return reference_slot
 
-    These are a property of the physical tray, so they are the same in
-    every run that tray is mounted in. The grid vectors are fitted from the
-    anchor's verified slots, so any slot label — including ones the anchor
-    did not have — can be placed."""
-    verified = anchor_for(holder, convention)["pixels"][detector]
+
+def slot_offsets(holder: str, convention: str, detector: str, slots) -> dict:
+    """Returns offsets = {slot: (offset_x, offset_y)}, the position of each slot relative to the
+    frame's reference slot (lowest slot label present in the verified position), in hex units.
+
+    These offsets are a property of the physical tray, so they are the same in every run
+    that tray is mounted in. The frame slots are defined in a grid, and the row/column vectors 
+    are fitted from the verified tray position's slots, so any slot label can be placed, including 
+    ones that were not visible in the verified run.
+    """
+    verified_pixels_by_slot = verified_position_for(holder, convention)["pixels"][detector]
 
     def center(pixels):
-        points = [detector_pixel_position(p, detector) for p in pixels]
-        return (sum(x for x, _ in points) / len(points),
-                sum(y for _, y in points) / len(points))
+        """For some verified pixels by slot (for a given holder and convention), multiple pixels can
+        be supplied (i.e. a source/slot was not well centered and illuminated a few pixels). This function
+        determines the center of pixels supplied by taking the average. 
+        """
+        points = [detector_pixel_position(pixel, detector) for pixel in pixels]
+        center_position = (sum(x for x, _ in points) / len(points), sum(y for _, y in points) / len(points))
+        return center_position
 
-    centers = {slot: center(pixels) for slot, pixels in verified.items()}
+    centers = {slot: center(pixels) for slot, pixels in verified_pixels_by_slot.items()}
     reference = centers[_reference_slot(centers)]
 
-    # Least-squares grid: center(slot) ~ origin + col*(c) + row*(r).
+    # least-squares fit of the slot grid: center(slot) = origin + column * column_step + row * row_step,
+    # solved separately for the x and y axes (slot labels look like "R2C3": row 2, column 3)
+    # example: slot = "R2C3" -> slot[1] = 2, slot [3] = 3
     import numpy as np
-    rows_cols = [(int(s[1]), int(s[3])) for s in centers]
-    A = np.array([[1.0, c, r] for r, c in rows_cols])
-    solution = [
-        np.linalg.lstsq(A, np.array([centers[s][axis] for s in centers]),
-                        rcond=None)[0]
-        for axis in (0, 1)
-    ]
+    rows_and_columns = [(int(slot[1]), int(slot[3])) for slot in centers]
+    design_matrix = np.array([[1.0, column, row] for row, column in rows_and_columns])
+    axis_solutions = [np.linalg.lstsq(design_matrix,np.array([centers[slot][axis] for slot in centers]),rcond=None)[0] for axis in (0, 1)]
 
     offsets = {}
     for slot in slots:
-        r, c = int(slot[1]), int(slot[3])
-        if slot in centers:          # verified: use it exactly
+        row, column = int(slot[1]), int(slot[3])
+        if slot in centers:          # verified by eye: use that position exactly
             point = centers[slot]
-        else:                        # extrapolate on the fitted grid
-            point = tuple(s[0] + s[1] * c + s[2] * r for s in solution)
+        else:                        # not verified: extrapolate on the fitted grid
+            point = tuple(solution[0] + solution[1] * column + solution[2] * row
+                          for solution in axis_solutions)
         offsets[slot] = (point[0] - reference[0], point[1] - reference[1])
     return offsets
 
 
-def _reference_slot(centers: dict) -> str:
-    """The slot other offsets are measured from (lowest label present)."""
-    return sorted(centers)[0]
+def refine_slot_offsets(ratios_by_segment: dict, frames: dict, offsets_by_detector: dict, segment_ids,
+                        radius: float = 2.0, min_weight: float = 5.0) -> tuple:
+    """Returns (corrected_offsets_by_detector, refine_report): the slot offsets derived from the
+    verified tray position, corrected using ALL scanned segments, and
+    refine_report[detector][slot] = (applied_x_shift, applied_y_shift, number_of_segments_measured).
 
-
-def refine_slot_offsets(excesses: dict, frames: dict, offsets_by_det: dict,
-                        keys, radius: float = 2.0,
-                        min_weight: float = 5.0) -> tuple:
-    """Correct anchor-derived slot offsets against ALL scanned segments.
-
-    slot_offsets() snaps each of the anchor's verified sources to its
-    pixel's CENTER, but a source can be verified "on pixel 101" while
-    really sitting up to ~0.9 hex off that center — so every inter-slot
-    spacing inherits up to a pixel of quantization error (seen directly
-    in run 9327, where the predicted R1C2-R1C3 spacing was ~1.2 hex too
-    large). Here every slot's predicted landing (located frame + offset)
-    is compared with the excess-weighted centroid of the counts around
-    it, per segment; the median residual per slot is folded back into
-    the offset. Residuals are taken relative to the reference slot's, so
-    the frame reference point stays put.
-
-    Returns (corrected offsets_by_det, report) with report[det][slot] =
-    (applied_dx, applied_dy, n_segments_measured)."""
-    corrected, report = {}, {}
-    for det, offsets in offsets_by_det.items():
+    slot_offsets() puts each verified source at its pixel's CENTER, but a source can be
+    verified "on pixel 101" while really sitting up to ~0.9 hex units off that center, so
+    every slot-to-slot spacing inherits up to a pixel of quantization error (seen directly
+    in run 9327, where the predicted R1C2-R1C3 spacing was ~1.2 hex units too large).
+    Here every slot's predicted landing point (located frame + offset) is compared with
+    the ratio-weighted centroid of the counts around it, once per segment, and the median
+    residual per slot is folded back into that slot's offset. Residuals are taken relative
+    to the reference slot's residual, so the frame's reference point stays put.
+    """
+    corrected_offsets_by_detector, refine_report = {}, {}
+    for detector, offsets in offsets_by_detector.items():
         residuals = {slot: [] for slot in offsets}
-        for k in keys:
-            frame = frames.get((k, det))
+        for segment_id in segment_ids:
+            frame = frames.get((segment_id, detector))
             if frame is None:
                 continue
-            excess = excesses[k][det]
-            positions = {p: detector_pixel_position(p, det) for p in excess}
-            for slot, (ox, oy) in offsets.items():
-                px, py = frame[0] + ox, frame[1] + oy
-                wsum = wx = wy = 0.0
-                for p, e in excess.items():
-                    if e <= 0:
+            ratios = ratios_by_segment[segment_id][detector]
+            pixel_positions = {pixel: detector_pixel_position(pixel, detector) for pixel in ratios}
+            for slot, (offset_x, offset_y) in offsets.items():
+                predicted_x, predicted_y = frame[0] + offset_x, frame[1] + offset_y
+                weight_sum = weighted_x = weighted_y = 0.0
+                for pixel, ratio in ratios.items():
+                    if ratio <= 0:
                         continue
-                    x, y = positions[p]
-                    if (x - px) ** 2 + (y - py) ** 2 > radius ** 2:
+                    pixel_x, pixel_y = pixel_positions[pixel]
+                    if ((pixel_x - predicted_x) ** 2
+                            + (pixel_y - predicted_y) ** 2) > radius ** 2:
                         continue
-                    w = min(e, EXCESS_CAP)
-                    wsum += w
-                    wx += w * x
-                    wy += w * y
-                if wsum < min_weight:
-                    continue  # slot off the face / too little signal here
-                residuals[slot].append((wx / wsum - px, wy / wsum - py))
-
-        def median(values):
-            ordered = sorted(values)
-            mid = len(ordered) // 2
-            if len(ordered) % 2:
-                return ordered[mid]
-            return (ordered[mid - 1] + ordered[mid]) / 2
+                    weight = min(ratio, ILLUMINATED_RATIO_CAP)
+                    weight_sum += weight
+                    weighted_x += weight * pixel_x
+                    weighted_y += weight * pixel_y
+                if weight_sum < min_weight:
+                    continue  # slot is off the detector face, or too little signal here
+                residuals[slot].append((weighted_x / weight_sum - predicted_x,
+                                        weighted_y / weight_sum - predicted_y))
 
         shifts = {
-            slot: ((median([r[0] for r in rs]), median([r[1] for r in rs]))
-                   if rs else (0.0, 0.0))
-            for slot, rs in residuals.items()
+            slot: ((median([residual[0] for residual in slot_residuals]),
+                    median([residual[1] for residual in slot_residuals]))
+                   if slot_residuals else (0.0, 0.0))
+            for slot, slot_residuals in residuals.items()
         }
-        ref = shifts[_reference_slot(offsets)]
-        corrected[det] = {
-            slot: (ox + shifts[slot][0] - ref[0],
-                   oy + shifts[slot][1] - ref[1])
-            for slot, (ox, oy) in offsets.items()
+        reference_shift = shifts[_reference_slot(offsets)]
+        corrected_offsets_by_detector[detector] = {
+            slot: (offset_x + shifts[slot][0] - reference_shift[0],
+                   offset_y + shifts[slot][1] - reference_shift[1])
+            for slot, (offset_x, offset_y) in offsets.items()
         }
-        report[det] = {
-            slot: (shifts[slot][0] - ref[0], shifts[slot][1] - ref[1],
+        refine_report[detector] = {
+            slot: (shifts[slot][0] - reference_shift[0],
+                   shifts[slot][1] - reference_shift[1],
                    len(residuals[slot]))
             for slot in offsets
         }
-    return corrected, report
+    return corrected_offsets_by_detector, refine_report
 
 
-def locate_frame(excess: dict, detector: str, offsets: dict, prior: tuple,
-                 window: tuple = (3.5, 2.5), step: float = 0.25,
-                 sigma: float = 2.0) -> tuple:
-    """The frame translation that best explains the excess counts under all
-    slots at once, searched on a grid around the prior.
+def locate_frame(ratios: dict, detector: str, offsets: dict, predicted_position: tuple,
+                 search_half_widths: tuple = (3.5, 2.5), search_spacing: float = 0.25,
+                 predicted_position_sigma: float = 2.0) -> tuple:
+    """Returns best_frame, the (x, y) of the reference slot whose single translation best
+    explains the count ratios under all slots at once, searched on a grid of candidate frames
+    around the predicted position.
 
-    Returns the position of the reference slot. The prior only penalises
-    distance, so enough real evidence can move the frame well away from
-    where the readback suggested."""
-    positions = {p: detector_pixel_position(p, detector) for p in excess}
-    best_t, best_score = prior, None
-    nx, ny = int(window[0] / step), int(window[1] / step)
-    for i in range(-nx, nx + 1):
-        for j in range(-ny, ny + 1):
-            t = (prior[0] + i * step, prior[1] + j * step)
-            score = -0.5 * ((i * step / sigma) ** 2 + (j * step / sigma) ** 2)
-            for dx, dy in offsets.values():
-                score += math.log1p(
-                    _evidence((t[0] + dx, t[1] + dy), excess, positions))
-            if best_score is None or score > best_score:
-                best_t, best_score = t, score
-    return best_t
+    Distance from the predicted position is only a penalty, not a limit, so enough real signal
+    can move the frame well away from where the readback suggested it would be.
+    """
+    pixel_positions = {pixel: detector_pixel_position(pixel, detector) for pixel in ratios}
+    best_frame, best_goodness = predicted_position, None
+    steps_x = int(search_half_widths[0] / search_spacing)
+    steps_y = int(search_half_widths[1] / search_spacing)
+    for step_index_x in range(-steps_x, steps_x + 1):
+        for step_index_y in range(-steps_y, steps_y + 1):
+            candidate_frame = (
+                predicted_position[0] + step_index_x * search_spacing,
+                predicted_position[1] + step_index_y * search_spacing)
+            # penalty for straying from the predicted position, as a Gaussian in units
+            # of predicted_position_sigma
+            goodness = -0.5 * (
+                (step_index_x * search_spacing / predicted_position_sigma) ** 2
+                + (step_index_y * search_spacing / predicted_position_sigma) ** 2)
+            for offset_x, offset_y in offsets.values():
+                slot_position = (candidate_frame[0] + offset_x, candidate_frame[1] + offset_y)
+                goodness += math.log1p(_signal_strength_at(slot_position, ratios, pixel_positions))
+            if best_goodness is None or goodness > best_goodness:
+                best_frame, best_goodness = candidate_frame, goodness
+    return best_frame
 
 
 def installation_for(session, segment) -> tuple:
-    """({slot: (source_id, source_label)}, holder, installation) for one
-    segment.
+    """Returns (sources_by_slot, holder, installation) for one segment, where
+    sources_by_slot = {slot: (source_id, source_label)} is what sat in each slot on the
+    segment's date, holder is the tray, and installation is the mounting period's key.
 
     The holder decides the frame geometry, so it travels with the slot map
     rather than being inferred from the date. The installation key — the
     latest installed_on among the rows in force (ISO date string) —
     identifies the MOUNTING period: touching any source means pulling the
     tray, so any change to the installed set starts a new mounting, and
-    pools must never span mountings (a re-installed tray can sit
-    differently; AS design, 2026-08-10)."""
+    segments must never be grouped across mountings (a re-installed tray can
+    sit differently; AS design, 2026-08-10).
+    """
     day = (segment.start_time or segment.run.start_time).date()
     rows = session.execute(
         select(SourceInstallation.slot, Source.id, Source.label,
@@ -338,151 +343,174 @@ def installation_for(session, segment) -> tuple:
         .where((SourceInstallation.removed_on.is_(None))
                | (SourceInstallation.removed_on > day))
     ).all()
-    holders = {h for _, _, _, h, _ in rows}
+    holders = {holder for _, _, _, holder, _ in rows}
     if len(holders) > 1:
         raise ValueError(f"segment {segment.run_number}/"
                          f"{segment.segment_index} spans holders {holders}")
-    installation = (max(inst for _, _, _, _, inst in rows).isoformat()
+    installation = (max(installed_on for _, _, _, _, installed_on in rows).isoformat()
                     if rows else None)
-    return ({slot: (sid, label) for slot, sid, label, _, _ in rows},
-            holders.pop() if holders else None,
-            installation)
+    sources_by_slot = {slot: (source_id, source_label) for slot, source_id, source_label, _, _ in rows}
+    holder = holders.pop() if holders else None
+    return sources_by_slot, holder, installation
 
 
-def check_anchor_installation(session, holder, convention, installation):
-    """A pool's anchor must come from the pool's OWN installation: a
-    re-mounted tray can sit differently, so an anchor verified under a
-    previous mounting must never pin a new one. Raises with the
-    re-anchoring instructions when it does not match (the same explicit
-    gap as a missing anchor — scan, eye-verify one segment's hit maps,
-    add the ANCHORS entry)."""
-    from calibrationnet.models import RunSegment
-    from calibrationnet.positions import anchor_for
-    from sqlalchemy import select as _select
-
-    anchor = anchor_for(holder, convention)
-    seg = session.execute(
-        _select(RunSegment).where(
-            RunSegment.run_number == anchor["run_number"],
-            RunSegment.segment_index == anchor["segment_index"])
+def check_verified_installation(session, holder, convention, installation):
+    """A group of segments must take its verified tray position from its OWN
+    installation: a re-mounted tray can sit differently, so a position verified under a
+    previous mounting must never pin a new one. Raises with the re-verification
+    instructions when it does not match, which is the same explicit gap as a missing
+    verified position (scan, eye-verify one segment's hit maps, add the
+    VERIFIED_TRAY_POSITIONS entry).
+    """
+    verified_position = verified_position_for(holder, convention)
+    verified_segment = session.execute(
+        select(RunSegment).where(
+            RunSegment.run_number == verified_position["run_number"],
+            RunSegment.segment_index == verified_position["segment_index"])
     ).scalar_one_or_none()
-    if seg is None:
+    if verified_segment is None:
         raise ValueError(
-            f"the anchor for ({holder}, {convention}) points at run "
-            f"{anchor['run_number']} segment {anchor['segment_index']}, "
+            f"the verified position for ({holder}, {convention}) points at run "
+            f"{verified_position['run_number']} segment {verified_position['segment_index']}, "
             "which is not in the database — ingest it or fix the entry.")
-    _slots, _holder, anchor_installation = installation_for(session, seg)
-    if anchor_installation != installation:
+    _sources_by_slot, _holder, verified_installation = installation_for(session, verified_segment)
+    if verified_installation != installation:
         raise ValueError(
-            f"the ({holder}, {convention}) anchor was verified under "
-            f"installation {anchor_installation} (run "
-            f"{anchor['run_number']}), but this pool's data is from "
+            f"the ({holder}, {convention}) position was verified under "
+            f"installation {verified_installation} (run "
+            f"{verified_position['run_number']}), but these segments are from "
             f"installation {installation} — a re-mounted tray can sit "
-            "differently, so this pool needs its own anchor: raster a "
-            "run, eye-verify one segment's hit maps (scripts/"
-            "show_hitmap.py), and add the ANCHORS entry in "
-            "calibrationnet/positions.py.")
+            "differently, so this installation needs its own verified "
+            "position: raster a run, eye-verify one segment's hit maps "
+            "(scripts/show_hitmap.py), and add the VERIFIED_TRAY_POSITIONS "
+            "entry in calibrationnet/positions.py.")
 
 
-def locate_all_frames(excesses: dict, key_positions: dict, conventions: dict,
-                      holders: dict, offsets: dict, fields: dict = None,
-                      installations: dict = None,
+def locate_all_frames(ratios_by_segment: dict, readback_positions: dict,
+                      conventions: dict, holders: dict, offsets_by_conditions: dict,
+                      fields: dict = None, installations: dict = None,
                       share_slopes: bool = True) -> tuple:
-    """Two-round frame location for every (segment key, detector).
+    """Returns (frames, trends) from a two-round frame location for every (segment_id, detector):
+    frames = {(segment_id, detector): frame} and trends = {conditions: trend}.
 
-    Round 1 locates each segment from its readback-based anchor prior;
-    round 2 refits the readback -> frame-position trend across all
-    segments sharing a pool spec and relocates with that tighter,
-    data-driven prior. The spec is (holder, convention) — plus the
-    field key when `fields` is given ({segment key: field_key(run)}),
-    because the mapping depends on the magnet/ExB configuration, and
-    plus the installation key when `installations` is given, because a
-    re-mounted tray can sit differently — trends must never pool
-    across field epochs or mountings. Returns (frames, trends): frames
-    keyed by (segment key, detector), trends by spec."""
-    def spec_of(k):
-        base = ((installations[k],) if installations is not None else ())
-        base += (holders[k], conventions[k])
-        return base + ((fields[k],) if fields is not None else ())
+    Round 1 locates each segment on its own, starting from the position predicted by the
+    verified tray position and that segment's readback. Round 2 fits the
+    readback -> frame-position trend across all segments sharing the same conditions and
+    re-locates each segment starting from that tighter, measured prediction.
 
-    keys = list(excesses)
-    located = {}
-    for k in keys:
-        for det in ("upper", "lower"):
-            offset = offsets[spec_of(k) + (det,)]
-            prior = predict_prior(holders[k], conventions[k], det, offset,
-                                  *key_positions[k])
-            located[(k, det)] = locate_frame(
-                excesses[k][det], det, offset, prior)
+    The conditions are (holder, convention), plus the field configuration when `fields`
+    is given ({segment_id: field_configuration_key(run)}), because the mapping depends on
+    the magnet/ExB configuration, plus the installation when `installations` is given,
+    because a re-mounted tray can sit differently. Trends must never be fitted across
+    field configurations or mountings. offsets_by_conditions is keyed by
+    conditions + (detector,) and holds each group's offsets = {slot: (offset_x, offset_y)}.
+    """
+    def conditions_of(segment_id):
+        conditions = ((installations[segment_id],)
+                      if installations is not None else ())
+        conditions += (holders[segment_id], conventions[segment_id])
+        conditions += ((fields[segment_id],) if fields is not None else ())
+        return conditions
+
+    segment_ids = list(ratios_by_segment)
+    first_round_frames = {}
+    for segment_id in segment_ids:
+        for detector in ("upper", "lower"):
+            offsets = offsets_by_conditions[conditions_of(segment_id) + (detector,)]
+            predicted_position = predict_frame_position(
+                holders[segment_id], conventions[segment_id], detector,
+                *readback_positions[segment_id])
+            first_round_frames[(segment_id, detector)] = locate_frame(
+                ratios_by_segment[segment_id][detector], detector, offsets,
+                predicted_position)
 
     frames, trends = {}, {}
-    for spec in {spec_of(k) for k in keys}:
-        conv_keys = [k for k in keys if spec_of(k) == spec]
-        by_det = {det: {k: located[(k, det)] for k in conv_keys}
-                  for det in ("upper", "lower")}
-        trend = fit_position_trend(by_det, key_positions)
+    for conditions in {conditions_of(segment_id) for segment_id in segment_ids}:
+        group_segment_ids = [segment_id for segment_id in segment_ids
+                             if conditions_of(segment_id) == conditions]
+        frames_by_detector = {
+            detector: {segment_id: first_round_frames[(segment_id, detector)]
+                       for segment_id in group_segment_ids}
+            for detector in ("upper", "lower")}
+        trend = fit_position_trend(frames_by_detector, readback_positions)
         if share_slopes:
             # Default ON (AS ruling 2026-08-15): see share_trend_slopes.
-            trend = share_trend_slopes(trend, by_det, key_positions)
-        trends[spec] = trend
-        for k in conv_keys:
-            for det in ("upper", "lower"):
-                prior = (predict_trend(trend, det, *key_positions[k])
-                         or located[(k, det)])
-                frames[(k, det)] = locate_frame(
-                    excesses[k][det], det, offsets[spec + (det,)], prior,
-                    window=(2.0, 1.5), sigma=1.0)
+            trend = share_trend_slopes(trend, frames_by_detector,
+                                       readback_positions)
+        trends[conditions] = trend
+        for segment_id in group_segment_ids:
+            for detector in ("upper", "lower"):
+                predicted_position = (
+                    predict_trend(trend, detector,
+                                  *readback_positions[segment_id])
+                    or first_round_frames[(segment_id, detector)])
+                frames[(segment_id, detector)] = locate_frame(
+                    ratios_by_segment[segment_id][detector], detector,
+                    offsets_by_conditions[conditions + (detector,)], predicted_position,
+                    search_half_widths=(2.0, 1.5),
+                    predicted_position_sigma=1.0)
     return frames, trends
 
 
-def share_trend_slopes(trend: dict, located_by_det: dict,
-                       key_positions: dict) -> dict:
+def share_trend_slopes(trend: dict, frames_by_detector: dict,
+                       readback_positions: dict) -> dict:
     """The tray is RIGID: both detectors see the same physical stage
     motion, so the readback->frame slopes must be shared (AS ruling
-    2026-08-15). The upper detector's own fit is biased — its excess
+    2026-08-15). The upper detector's own fit is biased — its count-ratio
     maps are ~5x weaker (the sources favor LDET), and the resulting
     slope error (fit -5.15 hex/inch vs ground-truth -4.33; lower fit
     -4.38 agrees) mis-pointed every UDET dwell of run 9469 by up to
     ~4 mm. Keep the LOWER slopes for both detectors; refit only the
     upper INTERCEPTS (median residual over the located upper frames
-    with slopes held). Returns the corrected trend; unchanged when
-    either detector's fit is missing."""
+    with slopes held). Returns corrected_trend; the input trend itself,
+    unchanged, when either detector's fit is missing."""
     import numpy as np
     lower, upper = trend.get("lower"), trend.get("upper")
     if lower is None or upper is None:
         return trend
-    points = [(pos, key_positions[k])
-              for k, pos in located_by_det["upper"].items()
-              if pos is not None and None not in key_positions[k]]
+    points = [(frame, readback_positions[segment_id])
+              for segment_id, frame in frames_by_detector["upper"].items()
+              if frame is not None
+              and None not in readback_positions[segment_id]]
     if not points:
         return trend
     new_upper = []
     for axis in (0, 1):
+        # per axis the trend is frame = a * linear + b * horizontal + c
         a, b, _c = lower[axis]
-        residuals = [pos[axis] - a * lin - b * hor
-                     for pos, (lin, hor) in points]
+        residuals = [frame[axis] - a * linear - b * horizontal
+                     for frame, (linear, horizontal) in points]
         new_upper.append((a, b, float(np.median(residuals))))
-    corrected = dict(trend)
-    corrected["upper"] = tuple(new_upper)
-    return corrected
+    corrected_trend = dict(trend)
+    corrected_trend["upper"] = tuple(new_upper)
+    return corrected_trend
 
 
-def fit_position_trend(frames_by_key: dict, key_positions: dict) -> dict:
-    """Least-squares (linear, horizontal) -> frame position, per detector,
-    over every located segment. Used as the second-round prior, and it is
-    what makes the mapping empirical: a re-homing or a units change shows
-    up as new coefficients, not as a wrong prediction."""
+def fit_position_trend(frames_by_detector: dict,
+                       readback_positions: dict) -> dict:
+    """Returns trend = {detector: (x_coefficients, y_coefficients)}, each a triple (a, b, c) in
+    frame = a * linear + b * horizontal + c, or None for a detector with fewer than three located
+    segments: the least-squares fit of (linear, horizontal) readback -> frame position, per
+    detector, over every located segment. Used as the second-round prediction, and it is what
+    makes the mapping empirical: a re-homing or a units change shows up as new coefficients,
+    not as a wrong prediction.
+    """
     import numpy as np
     trend = {}
-    for detector, located in frames_by_key.items():
-        keys = [k for k in located if None not in key_positions[k]]
-        if len(keys) < 3:
+    for detector, frames in frames_by_detector.items():
+        segment_ids = [segment_id for segment_id in frames
+                       if None not in readback_positions[segment_id]]
+        if len(segment_ids) < 3:
             trend[detector] = None
             continue
-        A = np.array([[key_positions[k][0], key_positions[k][1], 1.0]
-                      for k in keys])
+        design_matrix = np.array(
+            [[readback_positions[segment_id][0],
+              readback_positions[segment_id][1], 1.0]
+             for segment_id in segment_ids])
         trend[detector] = tuple(
-            np.linalg.lstsq(A, np.array([located[k][axis] for k in keys]),
+            np.linalg.lstsq(design_matrix,
+                            np.array([frames[segment_id][axis]
+                                      for segment_id in segment_ids]),
                             rcond=None)[0]
             for axis in (0, 1)
         )
@@ -491,108 +519,124 @@ def fit_position_trend(frames_by_key: dict, key_positions: dict) -> dict:
 
 def predict_trend(trend: dict, detector: str, linear: float,
                   horizontal: float):
+    """Returns predicted_position, the frame position this detector's fitted trend predicts at
+    a (linear, horizontal) readback, or None when the trend could not be fitted."""
     coefficients = trend.get(detector)
     if coefficients is None:
         return None
-    cx, cy = coefficients
-    return (cx[0] * linear + cx[1] * horizontal + cx[2],
-            cy[0] * linear + cy[1] * horizontal + cy[2])
+    x_coefficients, y_coefficients = coefficients
+    predicted_position = (x_coefficients[0] * linear + x_coefficients[1] * horizontal + x_coefficients[2],
+                          y_coefficients[0] * linear + y_coefficients[1] * horizontal + y_coefficients[2])
+    return predicted_position
 
 
-def predict_prior(holder: str, convention: str, detector: str,
-                  offsets: dict, linear: float, horizontal: float):
-    """First-round prior for the frame's reference-slot position, from this
-    tray's anchor and the convention's slopes."""
-    reference = _reference_slot(
-        anchor_for(holder, convention)["pixels"][detector])
-    return predict_slot_position(holder, convention, detector, reference,
-                                 linear, horizontal)
+def predict_frame_position(holder: str, convention: str, detector: str,
+                           linear: float, horizontal: float):
+    """Returns predicted_position, the first-round prediction of where the frame's reference
+    slot sits, from this tray's verified position and the convention's unit conversions."""
+    reference_slot = _reference_slot(verified_position_for(holder, convention)["pixels"][detector])
+    predicted_position = predict_slot_position(holder, convention, detector, reference_slot, linear, horizontal)
+    return predicted_position
 
 
 # --------------------------------------------------------------------------
-# Placing the sources once the frame is located.
+# Placing the sources once the frame is located
 
-def snap_to_cluster(pred: tuple, counts: dict, detector: str,
-                    radius: float = VERIFY_RADIUS):
-    """Snap a predicted position to the strongest pixel within radius.
-    Returns (peak_pixel, centroid, distance) or None."""
-    positions = {p: detector_pixel_position(p, detector) for p in counts}
+def match_to_cluster(predicted_position: tuple, ratios: dict, detector: str,
+                     radius: float = VERIFY_RADIUS):
+    """Returns (peak_pixel, centroid, match_distance) for the strongest pixel within radius of a
+    slot's predicted position, or None when no pixel is in range. The centroid is the
+    ratio-weighted center of the pixels within MEMBER_RADIUS of that peak, and match_distance
+    is how far the peak sits from the prediction.
+    """
+    pixel_positions = {pixel: detector_pixel_position(pixel, detector) for pixel in ratios}
     nearby = {
-        p: c for p, c in counts.items()
-        if math.hypot(positions[p][0] - pred[0], positions[p][1] - pred[1])
-        <= radius
+        pixel: ratio for pixel, ratio in ratios.items()
+        if math.hypot(pixel_positions[pixel][0] - predicted_position[0],
+                      pixel_positions[pixel][1] - predicted_position[1]) <= radius
     }
     if not nearby:
         return None
-    peak = max(nearby, key=nearby.get)
-    px, py = positions[peak]
+    peak_pixel = max(nearby, key=nearby.get)
+    peak_x, peak_y = pixel_positions[peak_pixel]
     members = {
-        p: c for p, c in counts.items()
-        if math.hypot(positions[p][0] - px, positions[p][1] - py)
-        <= MEMBER_RADIUS
+        pixel: ratio for pixel, ratio in ratios.items()
+        if math.hypot(pixel_positions[pixel][0] - peak_x,
+                      pixel_positions[pixel][1] - peak_y) <= MEMBER_RADIUS
     }
-    total = sum(members.values()) or 1
-    return (
-        peak,
-        (sum(positions[p][0] * c for p, c in members.items()) / total,
-         sum(positions[p][1] * c for p, c in members.items()) / total),
-        math.hypot(px - pred[0], py - pred[1]),
-    )
+    ratio_sum = sum(members.values()) or 1
+    centroid = (sum(pixel_positions[pixel][0] * ratio for pixel, ratio in members.items()) / ratio_sum,
+                sum(pixel_positions[pixel][1] * ratio for pixel, ratio in members.items()) / ratio_sum)
+    match_distance = math.hypot(peak_x - predicted_position[0], peak_y - predicted_position[1])
+    return peak_pixel, centroid, match_distance
 
 
-def snap_all(preds: dict, counts_det: dict, detector: str,
-             radius: float = VERIFY_RADIUS) -> dict:
-    """Snap every slot to a DISTINCT cluster, closest-first, each snap
-    claiming one ring of pixels — so two sources can never be placed on
-    the same cluster, which is physically impossible."""
-    remaining = dict(counts_det)
-    pending = dict(preds)
-    snapped = {}
-    while pending:
-        best_slot, best = None, None
-        for slot, pred in pending.items():
-            candidate = snap_to_cluster(pred, remaining, detector, radius)
-            if candidate and (best is None or candidate[2] < best[2]):
-                best_slot, best = slot, candidate
-        if best is None:
+def match_all_slots(predicted_positions: dict, ratios: dict,
+                    detector: str, radius: float = VERIFY_RADIUS) -> dict:
+    """Returns matches_by_slot = {slot: (peak_pixel, centroid, match_distance)}: every slot
+    matched to a DISTINCT cluster, closest match first, each match claiming one ring of pixels,
+    so two sources can never be placed on the same cluster, which is physically impossible.
+    Slots with no pixel in range are left out.
+    """
+    unclaimed_ratios = dict(ratios)
+    unmatched_slots = dict(predicted_positions)
+    matches_by_slot = {}
+    while unmatched_slots:
+        best_slot, best_match = None, None
+        for slot, predicted_position in unmatched_slots.items():
+            candidate_match = match_to_cluster(predicted_position, unclaimed_ratios, detector, radius)
+            # candidate_match[2] is the match distance: keep the closest match this round
+            if candidate_match and (best_match is None
+                                    or candidate_match[2] < best_match[2]):
+                best_slot, best_match = slot, candidate_match
+        if best_match is None:
             break
-        snapped[best_slot] = best
-        pending.pop(best_slot)
-        px, py = detector_pixel_position(best[0], detector)
-        for p in list(remaining):
-            xx, yy = detector_pixel_position(p, detector)
-            if math.hypot(xx - px, yy - py) <= MEMBER_RADIUS:
-                remaining.pop(p)
-    return snapped
+        matches_by_slot[best_slot] = best_match
+        unmatched_slots.pop(best_slot)
+        peak_x, peak_y = detector_pixel_position(best_match[0], detector)
+        for pixel in list(unclaimed_ratios):
+            pixel_x, pixel_y = detector_pixel_position(pixel, detector)
+            if math.hypot(pixel_x - peak_x, pixel_y - peak_y) <= MEMBER_RADIUS:
+                unclaimed_ratios.pop(pixel)
+    return matches_by_slot
 
 
-def assign_from_preds(counts_det: dict, detector: str, slot_sources: dict,
-                      preds: dict, radius: float = VERIFY_RADIUS) -> list:
-    """Place each slot's source and claim its pixels.
+def assign_sources_from_predictions(ratios: dict, detector: str,
+                                    source_labels_by_slot: dict,
+                                    predicted_positions: dict,
+                                    radius: float = VERIFY_RADIUS) -> list:
+    """Returns placements, one row per slot: (slot, source_label, predicted_position, peak_pixel,
+    match_distance, members), where members = {pixel(1-127): distance from the source center}.
+    An unmatched slot has peak_pixel and match_distance None and no members. Each pixel goes to
+    its nearest source only.
+    """
+    pixel_positions = {pixel: detector_pixel_position(pixel, detector) for pixel in ratios}
+    matches_by_slot = match_all_slots(predicted_positions, ratios, detector, radius)
 
-    Returns rows of (slot, source_label, predicted, peak_pixel, snap_dist,
-    members), where members maps pixel(1-127) to its distance from the
-    source center. Each pixel goes to its nearest source only."""
-    positions = {p: detector_pixel_position(p, detector) for p in counts_det}
-    snapped = snap_all(preds, counts_det, detector, radius)
-
-    centers, results = {}, []
-    for slot, source_label in sorted(slot_sources.items()):
-        if slot not in snapped:
-            results.append((slot, source_label, preds[slot], None, None, {}))
+    matched_slots, placements = {}, []
+    for slot, source_label in sorted(source_labels_by_slot.items()):
+        if slot not in matches_by_slot:
+            placements.append((slot, source_label, predicted_positions[slot],
+                               None, None, {}))
             continue
-        peak, centroid, dist = snapped[slot]
-        centers[slot] = (source_label, centroid, peak, dist)
+        peak_pixel, centroid, match_distance = matches_by_slot[slot]
+        matched_slots[slot] = (source_label, centroid, peak_pixel, match_distance)
 
-    claimed = {}
-    for slot, (_, centroid, _, _) in centers.items():
-        for p in counts_det:
-            d = math.hypot(positions[p][0] - centroid[0],
-                           positions[p][1] - centroid[1])
-            if d <= MEMBER_RADIUS and (p not in claimed or d < claimed[p][1]):
-                claimed[p] = (slot, d)
+    # every pixel within MEMBER_RADIUS of a source center is claimed by the nearest one
+    claimed_pixels = {}
+    for slot, (_, centroid, _, _) in matched_slots.items():
+        for pixel in ratios:
+            distance = math.hypot(pixel_positions[pixel][0] - centroid[0],
+                                  pixel_positions[pixel][1] - centroid[1])
+            if distance <= MEMBER_RADIUS and (
+                    pixel not in claimed_pixels
+                    or distance < claimed_pixels[pixel][1]):
+                claimed_pixels[pixel] = (slot, distance)
 
-    for slot, (source_label, _, peak, dist) in centers.items():
-        members = {p: d for p, (s, d) in claimed.items() if s == slot}
-        results.append((slot, source_label, preds[slot], peak, dist, members))
-    return results
+    for slot, (source_label, _, peak_pixel, match_distance) in matched_slots.items():
+        members = {pixel: distance
+                   for pixel, (claiming_slot, distance) in claimed_pixels.items()
+                   if claiming_slot == slot}
+        placements.append((slot, source_label, predicted_positions[slot], peak_pixel,
+                           match_distance, members))
+    return placements

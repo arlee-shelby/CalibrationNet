@@ -750,3 +750,202 @@ all placements used the correct ~-4.4 slopes. Prior error over a
 (AS + dev session 2026-09-03): leave 3.35/-3.90 unchanged
 (behavior-neutral cleanup); update the comment from an open question
 to this answer, pointing here.
+
+---
+
+## calibrationnet/source_assignment.py — 2026-09-23 — applied, pending AS pass (PILOT of the prepared-draft method)
+
+### Method
+
+First file cleaned by the prepared-draft method (docs/cleanup_plan.md
+method v2; glossary = docs/naming_conventions.md, ratified 2026-09-08).
+Dev session produced the draft on top of AS's own partial clean (kept
+verbatim except the items listed below), verified it in isolation,
+AS ruled on a 9-item checklist (all accepted 2026-09-23), dev session
+applied it with a guard (each real file unchanged since verification).
+AS's own editing pass on the real file follows; the cleanup tick comes
+after THAT pass, not after this step.
+
+### What changed (real-tree line numbers as applied)
+
+Ratified renames (naming_conventions.md): `_evidence` ->
+`_signal_strength_at` (l.139), `snap_to_cluster`/`snap_all` ->
+`match_to_cluster` (l.548)/`match_all_slots` (l.580), `assign_from_preds`
+-> `assign_sources_from_predictions` (l.610), `predict_prior` ->
+`predict_frame_position` (l.533), `check_anchor_installation` ->
+`check_verified_installation` (l.362); k/keys -> segment_id(s);
+spec/pool -> conditions/conditions_of (l.409); excess(es) ->
+ratios/ratios_by_segment; prior -> predicted_position; det/rp spelled
+out; cx,cy -> x_coefficients/y_coefficients (l.524). Companion:
+positions.py `ANCHORS` -> `VERIFIED_TRAY_POSITIONS` (l.71), `anchor_for`
+-> `verified_position_for` (l.117), `anchor_pixel_center` ->
+`verified_slot_center` (l.160) — "anchor" no longer appears in either
+file. Scripts: exactly two identifiers at their call sites
+(assign_sources.py l.42-43, 119, 188; optimal_positions.py l.64, 452);
+the scripts' own vocabulary is untouched (their own passes).
+
+AS rulings beyond pure renames (all accepted):
+1. nested private `median` in refine_slot_offsets deleted; module
+   `statistics.median` used (l.265-266) — identical, odd+even tested.
+2. `predict_frame_position` drops the never-used `offsets` parameter
+   (def l.533, sole call l.417).
+3. three function-local imports hoisted to module top (l.36-38;
+   `RunSegment` added to the models import).
+4. positions.py companion applied together (mutually dependent imports
+   — MUST be one commit with source_assignment.py).
+5. `details` -> `detectors` in compute_baselines (l.105) — closes the
+   deferred "details vs segment_counts" ruling with a third name.
+6. inner `format` -> `format_value` (l.90): shadowed the built-in.
+7. ILLUMINATED_* constants comment reworded to current names (l.51-53).
+8. module docstring wording "many real sources" -> "real sources" (l.25).
+9. "pool across field configurations" -> "grouped across" (l.88).
+
+### Verification (all on 2026-09-23, real tree after applying)
+
+py_compile x4; equivalence probe (cleanup_review/equivalence_probe.py:
+5 segments x 2 detectors x 127 pixels synthetic data through every
+function) vs the COMMITTED ORIGINAL at HEAD — 7,355 result lines
+identical; full pipeline (scripts/assign_sources.py, whole database)
+before vs after — review CSV byte-identical, 5,536 placements over 507
+segments; benchmark_fits --check-only green; no retired vocabulary left
+(grep anchor|snap|spec|pool|excess|prior|evidence|testif).
+
+### Side findings
+
+- The tracked/live `source_assignment_review.csv` was STALE (built from
+  469 segments; the database now has 507) — regenerate when convenient.
+- Test-harness lesson: an editable install makes `import calibrationnet`
+  resolve to the real repo unless PYTHONPATH forces the test tree, and
+  `.env` is read from the cwd — both bit the pipeline test twice before
+  the setup was right. Recorded so the next file's verification starts
+  from the working recipe (PYTHONPATH=<tree>, .env exported, cwd=<tree>).
+
+## calibrationnet/source_assignment.py — 2026-10-01 — v2: data-flow names (style rules 17/18), applied, pending AS pass
+
+### Why a second draft
+
+AS's editing pass on the applied pilot stalled on "where does this come
+from": the glossary had fixed word choice but not flow. The ratios dict
+was under four names — `relative_counts` made it without naming its
+return, the scripts held it as `excesses`/`excess`, six functions took
+it as `ratios`/`ratios_by_segment`, and the three matching functions
+took it as `counts`/`detector_counts` while the script actually passed
+ratios into them (`match_to_cluster`'s docstring even said
+"count-weighted"). Hence two new style rules in naming_conventions.md
+(17: one quantity, one name along the whole chain, bare name = per-pixel
+dict for one detector, nested = `_by_<key>`; 18: every `return` returns a
+named variable) and step 0 of method v2 in cleanup_plan.md (data-flow
+table first, ratified before drafting, then written into the module
+docstring). AS ruled the nine quantity names and the named-return rule
+in chat (rulings record 2026-10-01 in naming_conventions.md), then
+accepted the 14 consequential items of the review checklist
+(cleanup_review/README.md section B) with "proceed with everything".
+
+### What changed (real-tree line numbers as applied; applied == draft)
+
+Module docstring point 4, the data-flow table (l.27-72): every quantity,
+its shape, who makes it, who consumes it. Renames: `fetch_all_counts` ->
+returns `counts_by_segment` (l.108-128); `compute_baselines
+(counts_by_segment)` -> `baselines_by_detector` (l.149-168);
+`relative_counts` -> `count_ratios(counts, baselines)` -> `ratios`
+(l.171-176; reverses AS's own earlier [A] name so the function names its
+product); `illuminated_neighbor_number` returns `illuminated_neighbors`
+(l.179-193); `_signal_strength_at(slot_position, ratios,
+pixel_positions)` -> `signal_strength` (l.196-220); `slot_offsets` uses
+`verified_pixels_by_slot` (l.236); `refine_slot_offsets` returns
+`corrected_offsets_by_detector, refine_report` (l.276-337);
+`locate_frame` -> `best_frame`, `candidate_frame`, `slot_position` as a
+named local (l.340-369); `installation_for` returns `sources_by_slot,
+holder, installation` (l.372-402); `check_verified_installation` uses
+`verified_position`, `verified_segment` (l.405-434); `locate_all_frames
+(..., offsets_by_conditions, ...)` with `first_round_frames`,
+`frames_by_detector`, inner `offsets` (l.437-500); `share_trend_slopes
+(trend, frames_by_detector, ...)` -> `corrected_trend` (l.503-534);
+`fit_position_trend(frames_by_detector, ...)` (l.537-565);
+`predict_trend`/`predict_frame_position` return `predicted_position`
+(l.568-587); `match_to_cluster(predicted_position, ratios, ...)` ->
+`peak_pixel, centroid, match_distance`, `ratio_sum`, "ratio-weighted"
+(l.593-619); `match_all_slots(predicted_positions, ratios, ...)` ->
+`matches_by_slot` with `unclaimed_ratios`, `unmatched_slots`,
+`candidate_match` (l.622-649); `assign_sources_from_predictions(ratios,
+detector, source_labels_by_slot, predicted_positions, ...)` ->
+`placements` (l.652-690). AS's own compute_baselines loops: `detectors`
+-> `counts_by_detector`, `pixels` -> `counts` (l.158-160); AS's `counts`
+loop variable in the ratio comprehension back to singular `count`
+(l.175, the parameter is now `counts`). `predicted_position` keeps both
+of its uses (frame's reference slot before locating; every slot after),
+stated in the table.
+
+Scripts, boundary names only, produced by the line-pinned edit list
+cleanup_review/make_scripts_draft_v2.py (same line numbers before and
+after): assign_sources.py 58 lines — `counts` -> `counts_by_segment`,
+`key_positions` -> `readback_positions`, `slot_maps` ->
+`sources_by_segment`, `baselines` -> `baselines_by_conditions`,
+`excesses`/`excess` -> `ratios_by_segment`/`ratios`, `offsets` ->
+`offsets_by_conditions` (+ `slot_offset` -> `offsets`), `labels` ->
+`source_labels_by_slot`, `tx, ty` -> `frame_x, frame_y`, `preds`/`pred`
+-> `predicted_positions`/`predicted_position`, `label_` ->
+`source_label`, `peak` -> `peak_pixel`, `dist` -> `match_distance`,
+`peak_excess` -> `peak_ratio`, `n_support` -> `illuminated_neighbors`,
+the +1000 `offset` -> `lower_detector_pixel_shift` (l.190, 203, 211,
+262, 289), `cmap` -> `counts` (l.261-280); optimal_positions.py 54 lines
+— the same boundary names plus `offsets_by_det` -> `offsets_by_detector`,
+`offsets_for_locate` -> `offsets_by_conditions`, `raw` ->
+`unrefined_offsets_by_detector`, `slot_map` -> `sources_by_slot`,
+`cx, cy` -> `x_coefficients, y_coefficients` (l.102-104, 539-542),
+`ox, oy` -> `offset_x, offset_y` (l.109-112), `candidate_coverage`'s
+parameter `offsets` -> `offsets_by_detector` (l.92, 109). CSV headers
+(`peak_excess`, `n_support`, `snap_dist`, `pred_x/y`) unchanged
+(interfaces). The scripts' own vocabulary (k, det, spec, pool_of, meta,
+base, dx/dy, their docstrings' "excess counts"/"anchor-derived") waits
+for their own passes.
+
+### Verification (2026-10-01)
+
+Draft in isolation: py_compile x3; equivalence probe working tree vs
+draft — 7,355 lines identical; full pipeline against the live database
+(511 segments, 4 without a recorded position skipped as before), working
+tree and draft run side by side — review CSV byte-identical, 5,537 lines
+(5,536 placements over 507 segments, 1,871 flagged CHECK both sides);
+benchmark_fits --check-only green; inventory 20 -> 20 functions; every
+`return` audited (named, literal, or unchanged input); retired-name
+grep clean apart from CSV headers and the scripts' own prose.
+Apply, guarded: the two script drafts regenerated byte-identically from
+the live sources immediately before the copy (content guard), pre-apply
+copies kept; after the copy, probe on the REAL tree vs the committed
+HEAD c71f64a (old names, via the probe's fallbacks) and vs the pre-apply
+copy — both identical; benchmark green; imports of both scripts
+resolve. The confirmatory pipeline re-run on the real tree could NOT be
+done: the database connection was refused (the DB compute-node job had
+ended); since the applied bytes equal the draft bytes (cmp), the
+side-by-side run above covers the same code — repeat it when the tunnel
+is back (`python scripts/assign_sources.py --path <scratch>.csv`, cmp
+against the pre-apply CSV).
+
+### Side findings
+
+- **Two weightings for one centroid (behavior, AS to decide).**
+  `apply_from_csv` (assign_sources.py l.261-279) recomputes every
+  applied row's membership around the CSV's peak with a COUNT-weighted
+  centroid, while `generate_review`'s placements come from
+  `match_to_cluster` with a RATIO-weighted centroid (module l.615-617).
+  So the CSV's `pixels` column can differ from what `--apply` claims
+  (its docstring does say the column is ignored). Left as is; a
+  cleanup must not change it — if AS wants one weighting, it is an
+  escape-hatch change with its own entry.
+- Harness lesson 2: a draft overlay directory without `__init__.py`
+  works only because the editable install is a meta-path finder
+  (`__editable___calibrationnet_0_1_0_finder.py`), so the overlay's
+  namespace portion supplies `source_assignment`/`positions` and the
+  finder supplies the rest — but ONLY when the script directory and
+  PYTHONPATH precede the real package. `python -c` from the repo root
+  puts the cwd first and silently imports the real package; check
+  `module.__file__` in the same path context as the real run.
+- Guard oddity, unresolved: the two real scripts showed an mtime of
+  11:49:58 (after the drafts were built at 11:43) although their content
+  was unchanged (byte-identical regeneration, and a diff against HEAD
+  showing only the pilot's renamed lines); probably an unchanged save
+  from VSCode. The content guards, not the mtime, were what admitted
+  the apply.
+- docs/source_assignment.md l.18 still says "Excess = counts / own
+  baseline" (AS's doc; glossary word is "ratio") — for the docs pass.

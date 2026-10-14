@@ -39,16 +39,16 @@ from calibrationnet.models import (
 from calibrationnet.source_assignment import (
     MEMBER_RADIUS,
     VERIFY_RADIUS,
-    assign_from_preds,
-    check_anchor_installation,
+    assign_sources_from_predictions,
+    check_verified_installation,
     compute_baselines,
-    excess_map,
+    count_ratios,
     fetch_all_counts,
-    field_key,
+    field_configuration_key,
     installation_for,
     locate_all_frames,
     slot_offsets,
-    support_at,
+    illuminated_neighbor_number,
 )
 
 REVIEW_CSV = "source_assignment_review.csv"
@@ -84,48 +84,48 @@ def generate_review(label: str, force: bool, runs=None,
             "Apply them first (--apply) or pass --force to discard."
         )
 
-    counts = fetch_all_counts(label)
+    counts_by_segment = fetch_all_counts(label)
 
     with get_session() as session:
         segments = {
             (seg.run_number, seg.segment_index): seg
             for seg in session.scalars(select(RunSegment))
         }
-        missing = sorted(k for k in counts if k not in segments)
+        missing = sorted(k for k in counts_by_segment if k not in segments)
         if missing:
             raise SystemExit(f"filter outputs exist for segments not in the "
                              f"database: {missing[:5]}")
-        key_positions = {
+        readback_positions = {
             k: (segments[k].linear_position, segments[k].horizontal_position)
-            for k in counts
+            for k in counts_by_segment
         }
-        conventions = {k: segments[k].position_convention for k in counts}
-        slot_maps, holders, installations = {}, {}, {}
-        for k in counts:
-            slot_maps[k], holders[k], installations[k] = installation_for(
+        conventions = {k: segments[k].position_convention for k in counts_by_segment}
+        sources_by_segment, holders, installations = {}, {}, {}
+        for k in counts_by_segment:
+            sources_by_segment[k], holders[k], installations[k] = installation_for(
                 session, segments[k])
         # Field configuration per segment: pools must never mix magnet/
         # ExB epochs (the readback->frame mapping depends on them).
         run_rows = {r.run_number: r for r in session.scalars(
             select(Run).where(Run.run_number.in_(
-                {k[0] for k in counts})))}
-        fields = {k: field_key(run_rows[k[0]]) for k in counts}
+                {k[0] for k in counts_by_segment})))}
+        fields = {k: field_configuration_key(run_rows[k[0]]) for k in counts_by_segment}
         # Every pool's anchor must come from the pool's own installation
         # (a re-mounted tray can sit differently) — checked up front so
         # a missing re-anchor fails loudly before any placement runs.
         for inst, holder, conv in sorted({(installations[k], holders[k],
-                                           conventions[k]) for k in counts
+                                           conventions[k]) for k in counts_by_segment
                                           if holders[k] is not None}):
-            check_anchor_installation(session, holder, conv, inst)
+            check_verified_installation(session, holder, conv, inst)
 
-    unplaceable = sorted(k for k in counts
-                         if key_positions[k][0] is None
-                         or key_positions[k][1] is None)
+    unplaceable = sorted(k for k in counts_by_segment
+                         if readback_positions[k][0] is None
+                         or readback_positions[k][1] is None)
     if unplaceable:
         print(f"note: {len(unplaceable)} segment(s) have no recorded position "
               f"and are skipped: {unplaceable[:5]}")
 
-    keys = [k for k in sorted(counts) if k not in unplaceable]
+    keys = [k for k in sorted(counts_by_segment) if k not in unplaceable]
     # Baselines are per (convention, field), NOT across the whole
     # campaign: a pixel's intrinsic rate depends on the bias/threshold/
     # field conditions of its epoch, so mixing epochs distorts every
@@ -143,30 +143,30 @@ def generate_review(label: str, force: bool, runs=None,
     def pool_of(k):
         return (installations[k], holders[k], conventions[k], fields[k])
 
-    baselines = {}
+    baselines_by_conditions = {}
     for pool in set(pool_of(k) for k in keys):
-        subset = {k: counts[k] for k in keys if pool_of(k) == pool}
-        baselines[pool] = compute_baselines(subset)
+        subset = {k: counts_by_segment[k] for k in keys if pool_of(k) == pool}
+        baselines_by_conditions[pool] = compute_baselines(subset)
         print(f"baselines for {pool[1]} {pool[2]} at {pool[3]} "
               f"(installation {pool[0]}): {len(subset)} segment(s)")
-    excesses = {k: {det: excess_map(counts[k][det],
-                                    baselines[pool_of(k)][det])
+    ratios_by_segment = {k: {det: count_ratios(counts_by_segment[k][det],
+                                    baselines_by_conditions[pool_of(k)][det])
                     for det in ("upper", "lower")}
                 for k in keys}
     # Slot offsets are a property of the physical frame, so they only
     # depend on the convention's anchor, not on the segment — but the
     # offsets dict is keyed by the full pool spec (incl. installation
     # and field) because frame location and trends group by it.
-    offsets = {}
+    offsets_by_conditions = {}
     for k in keys:
         spec = pool_of(k)
         for det in ("upper", "lower"):
-            if spec + (det,) not in offsets:
-                offsets[spec + (det,)] = slot_offsets(
-                    holders[k], conventions[k], det, slot_maps[k])
+            if spec + (det,) not in offsets_by_conditions:
+                offsets_by_conditions[spec + (det,)] = slot_offsets(
+                    holders[k], conventions[k], det, sources_by_segment[k])
 
     frames, _trends = locate_all_frames(
-        excesses, key_positions, conventions, holders, offsets,
+        ratios_by_segment, readback_positions, conventions, holders, offsets_by_conditions,
         fields=fields, installations=installations)
 
     review_rows = []
@@ -178,37 +178,37 @@ def generate_review(label: str, force: bool, runs=None,
     for k in write_keys:
         run_number, segment_index = k
         for det in ("upper", "lower"):
-            labels = {slot: lab for slot, (sid, lab) in slot_maps[k].items()}
-            tx, ty = frames[(k, det)]
-            slot_offset = offsets[pool_of(k) + (det,)]
-            preds = {slot: (tx + slot_offset[slot][0],
-                            ty + slot_offset[slot][1]) for slot in labels}
-            excess = excesses[k][det]
-            for (slot, label_, pred, peak, dist, members) in (
-                    assign_from_preds(excess, det, labels, preds,
+            source_labels_by_slot = {slot: source_label for slot, (_source_id, source_label) in sources_by_segment[k].items()}
+            frame_x, frame_y = frames[(k, det)]
+            offsets = offsets_by_conditions[pool_of(k) + (det,)]
+            predicted_positions = {slot: (frame_x + offsets[slot][0],
+                            frame_y + offsets[slot][1]) for slot in source_labels_by_slot}
+            ratios = ratios_by_segment[k][det]
+            for (slot, source_label, predicted_position, peak_pixel, match_distance, members) in (
+                    assign_sources_from_predictions(ratios, det, source_labels_by_slot, predicted_positions,
                                       radius=VERIFY_RADIUS)):
-                offset = 1000 if det == "lower" else 0
-                peak_excess = excess.get(peak) if peak else None
-                n_support = support_at(peak, det, excess) if peak else 0
-                flag = (dist is None or dist > FLAG_DIST
-                        or (peak_excess or 0) < MIN_EXCESS
-                        or n_support < 2)
+                lower_detector_pixel_shift = 1000 if det == "lower" else 0
+                peak_ratio = ratios.get(peak_pixel) if peak_pixel else None
+                illuminated_neighbors = illuminated_neighbor_number(peak_pixel, det, ratios) if peak_pixel else 0
+                flag = (match_distance is None or match_distance > FLAG_DIST
+                        or (peak_ratio or 0) < MIN_EXCESS
+                        or illuminated_neighbors < 2)
                 flagged += flag
                 review_rows.append({
                     "run": run_number, "segment": segment_index,
                     "field": fields[k],
-                    "detector": det, "slot": slot, "source": label_,
-                    "pred_x": round(pred[0], 2),
-                    "pred_y": round(pred[1], 2),
-                    "peak_pixel": peak + offset if peak else "",
-                    "snap_dist": round(dist, 2) if dist is not None else "",
-                    "peak_excess": round(peak_excess, 1)
-                                   if peak_excess else "",
-                    "peak_counts": counts[k][det].get(peak, "")
-                                   if peak else "",
-                    "n_support": n_support,
+                    "detector": det, "slot": slot, "source": source_label,
+                    "pred_x": round(predicted_position[0], 2),
+                    "pred_y": round(predicted_position[1], 2),
+                    "peak_pixel": peak_pixel + lower_detector_pixel_shift if peak_pixel else "",
+                    "snap_dist": round(match_distance, 2) if match_distance is not None else "",
+                    "peak_excess": round(peak_ratio, 1)
+                                   if peak_ratio else "",
+                    "peak_counts": counts_by_segment[k][det].get(peak_pixel, "")
+                                   if peak_pixel else "",
+                    "n_support": illuminated_neighbors,
                     "n_pixels": len(members),
-                    "pixels": ";".join(str(p + offset)
+                    "pixels": ";".join(str(p + lower_detector_pixel_shift)
                                        for p in sorted(members)),
                     "flag": "CHECK" if flag else "",
                 })
@@ -232,7 +232,7 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
     corrections claim pixels consistently."""
     from collections import defaultdict
 
-    counts = fetch_all_counts(label)
+    counts_by_segment = fetch_all_counts(label)
     rows = list(csv.DictReader(open(path)))
     groups = defaultdict(list)
     skipped = 0
@@ -258,13 +258,13 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
             raise SystemExit(f"Duplicate peak_pixel in run {run_number} "
                              f"segment {segment_index} {det}: "
                              f"{sorted(peaks)}")
-        cmap = counts[(run_number, segment_index)][det]
-        offset = 1000 if det == "lower" else 0
+        counts = counts_by_segment[(run_number, segment_index)][det]
+        lower_detector_pixel_shift = 1000 if det == "lower" else 0
         centers = []
         for r in group:
             px, py = detector_pixel_position(int(r["peak_pixel"]), det)
             ring = {
-                p: c for p, c in cmap.items()
+                p: c for p, c in counts.items()
                 if math.hypot(detector_pixel_position(p, det)[0] - px,
                               detector_pixel_position(p, det)[1] - py)
                 <= MEMBER_RADIUS
@@ -277,7 +277,7 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                  sum(detector_pixel_position(p, det)[1] * c
                      for p, c in ring.items()) / total),
             ))
-        for p in cmap:
+        for p in counts:
             xx, yy = detector_pixel_position(p, det)
             best = None
             for source_label, (cx, cy) in centers:
@@ -286,7 +286,7 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
                     best = (source_label, d)
             if best:
                 assignments[(run_number, segment_index,
-                             p + offset)] = best[0]
+                             p + lower_detector_pixel_shift)] = best[0]
 
     # Scope the apply to the runs the CSV actually covers: a per-run
     # CSV must never NULL other runs' claims (AS design 2026-08-24).
@@ -294,7 +294,7 @@ def apply_from_csv(label: str, path: str = REVIEW_CSV) -> None:
     with get_session() as session:
         source_ids = {s.label: s.id for s in session.scalars(select(Source))}
         updated = 0
-        for (run_number, segment_index) in sorted(counts):
+        for (run_number, segment_index) in sorted(counts_by_segment):
             if run_number not in csv_runs:
                 continue
             rps = session.scalars(

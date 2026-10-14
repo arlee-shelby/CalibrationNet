@@ -2,6 +2,9 @@
 
 **Working mode (AS ruling 2026-08-20): AS makes the edits; the
 assistant explains, answers syntax questions, and verifies safety.**
+Amended 2026-09-23 for dense files: the assistant prepares a fully
+verified draft first and AS edits on top of it — see "Method v2"
+below; the AS-edits loop stays the mode for small files.
 Goals: (1) readability, (2) AS understands every line, (3) remove
 AS-specific development comments, (4) ready the repo for public use.
 Development is COMPLETE and signed off (docs/development_plan.md,
@@ -66,6 +69,89 @@ change and follows the escape hatch below.
 6. Tick the file off below (edit this document), commit with a
    `cleanup:` prefixed message, move on.
 
+## Method v2: prepared drafts for dense files (AS ruling 2026-09-23)
+
+Why: the AS-edits loop on source_assignment.py managed ~150 lines in
+several days, because AS was translating the assistant's CS-flavored
+names line by line with the assistant as a dictionary. Once
+docs/naming_conventions.md was ratified (2026-09-08) the translation
+became mechanical, so it moved to the assistant; AS's time goes to
+ruling and understanding. Piloted on source_assignment.py 2026-09-23
+(cleanup_findings.md entry). Use it for the dense engine files and the
+big scripts (fitting.py, fit_recipes.py, queries.py, optimal_positions.py,
+fit_spectra.py, calibrate.py, extract_adc_peaks.py, assign_sources.py,
+process_run.py); small files keep the per-file loop above.
+
+Per file:
+
+0. **Data-flow table first (added 2026-10-01).** Before drafting, the
+   assistant lists every quantity that crosses a function boundary in
+   the file and its scripts: one name, exact shape, the function that
+   makes it (line), every function that takes it (lines), and today's
+   names at each. AS rules on that table (about ten rows) before any
+   draft is written; the draft is then checked against it by grep
+   (every holder of quantity X is named X, no parameter name
+   contradicts what its call sites pass, every `return` returns a named
+   variable — naming_conventions.md style rules 17 and 18). The ratified
+   table goes into the module docstring as a data-flow section, so the
+   file carries its own reader's guide. Why: the source_assignment.py
+   pilot's glossary renames left one quantity (ratios) under four
+   names, one of them wrong, and AS's pass stalled on "where does this
+   come from".
+1. **Draft.** The assistant writes a prepared draft of the file into
+   `cleanup_review/` (gitignored; one folder per file or reuse):
+   glossary renames applied consistently across the file AND every
+   importer (re-grep the live call sites), physics-voice docstrings,
+   any of AS's own prior edits kept verbatim, structure untouched. With
+   it: a one-page **reader's guide** (what the file computes, in what
+   order, what the real math means — read before the code), a
+   **README** with a numbered checklist of every judgment call (each
+   item cites `yours:line -> draft:line`), and `open_diffs.sh` to open
+   the side-by-side diffs in VSCode.
+2. **Verify the draft in isolation, before AS reads it.** Minimum:
+   `py_compile` of every touched file; an **equivalence probe** — a
+   script that runs every pure function on identical synthetic inputs
+   through the current file and the draft and compares the JSON outputs
+   byte-for-byte (template: cleanup_review/equivalence_probe.py from the
+   pilot); an **output-identity** run where one exists (regenerate the
+   file's real product with both versions against the same database —
+   e.g. the review CSV for source_assignment.py, reference-pixel fits
+   for fitting.py — and `cmp` them); `benchmark_fits --check-only`;
+   a grep proving no retired vocabulary survives; a function/constant
+   inventory diff (nothing dropped) and a spot check that the
+   development facts in docstrings survived.
+   Test-harness recipe (learned the hard way): the editable install
+   makes `import calibrationnet` resolve to the real repo unless
+   `PYTHONPATH=<test tree>` is set; `.env` is read from the cwd, so
+   `set -a; . ./.env; set +a` first, then run from the test tree.
+3. **AS rules** on the checklist (chat is fine: "all as recommended" or
+   the numbers to change). Disagreements with the translation are
+   settled HERE, by regenerating the draft; personal wording waits for
+   step 5. That reply is the explicit go-ahead to apply.
+4. **Apply + commit.** The assistant copies the draft over the real
+   files, guarded (each real file must be unchanged since it was
+   verified), re-runs the whole of step 2 on the real tree — the probe
+   now compared against the committed HEAD — and writes the
+   cleanup_findings.md entry (status "applied, pending AS pass"). AS
+   commits, ONE commit per file cluster: `cleanup: <file> — prepared
+   draft`. Files whose renames import each other (e.g. positions.py <->
+   source_assignment.py) must be in the same commit or HEAD is
+   unimportable. NOT ticked yet.
+5. **AS pass.** AS edits the real file directly (the original mode),
+   asking as they go. On "done": diff review of AS's edits only, the
+   same probe re-run (working tree vs the step-4 commit), the same
+   output-identity and benchmark checks, findings entry updated to
+   "done", tick, commit `cleanup: <file> — AS pass`. Then delete the
+   review folder (fold anything worth keeping from the reader's guide
+   into the file's topic doc first).
+
+Standing rules that came out of the pilot: every suggestion or
+checklist item cites a line number (and file when more than one is in
+play; both sides when comparing versions); the assistant never writes
+to AS's real files outside step 4's explicit go-ahead; review material
+never lives only in a session's temp folder — it goes in
+`cleanup_review/` where AS can open it.
+
 ## Hard rules
 
 - `calibrationnet/fit_functions.py` and `fit_functions_reference.py`
@@ -100,9 +186,10 @@ change and follows the escape hatch below.
   redevelopment ritual: **docs/fit_storage.md**.
 - Position planning method (+ the shared-trend saga: plan item 11):
   **docs/position_planning.md** and development_plan.md.
-- Source assignment design (joint method, pools, anchors, claims):
-  the module docstrings in calibrationnet/source_assignment.py +
-  scripts/assign_sources.py, and the assistant's persistent memory.
+- Source assignment design (joint method, condition groups, verified
+  tray positions, claims): the module docstrings in
+  calibrationnet/source_assignment.py + scripts/assign_sources.py,
+  docs/source_assignment.md, and the assistant's persistent memory.
 - Notebook analysis how-to: **docs/notebook_fitting.md**.
 - Original architecture: **docs/pipeline_roadmap.md**.
 
@@ -125,6 +212,13 @@ conventions (models/ especially), and the shared context makes later
 files in the batch go faster and stay consistent. Start a fresh
 session when switching directories, or sooner if the session gets
 sluggish or unfocused.
+
+The state never lives in a session's history: this file (charter +
+inventory ticks), docs/cleanup_findings.md (every decision),
+docs/naming_conventions.md (the law) and the assistant's memory carry
+it, so any session — old or new — can run either method after reading
+them. A long gap only expires the model's prompt cache (the first
+message back is slower); no history is lost.
 
 ## Known items to address during cleanup
 
