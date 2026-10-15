@@ -21,34 +21,112 @@ code do the rest:
     # look before writing: everything is derived and printed, nothing stored
     python scripts/ingest_run_from_files.py 10081 --h5-dir ... --dry-run
 
-The subrun count stored is the LAST subrun index, as the slow-controls
-"lastsubrun" column is (a run with files 0..1722 stores 1722). The only
-things a run-log row carries that this cannot reproduce are its event
-totals and description, neither of which the runs table stores.
+The subrun count stored is the NUMBER of subruns, as ingest_run stores
+it (the run log's 0-indexed "lastsubrun" + 1: a run with files 0..1722
+stores 1723). The settings come from the same places a normal ingest
+reads them: the slow-controls instrument tables averaged over the window
+(the magnet currents "main" and "udet" live ONLY there), then, for the
+2026 epoch, the Test archive for whatever those tables no longer carry.
+The only things a run-log row carries that this cannot reproduce are its
+event totals and description, neither of which the runs table stores.
 Re-running is safe: like ingest_run, an existing run is refreshed in
 place and segments with analysis attached are never deleted.
 
-Note for the cleanup merge: the two package imports below move from
+Note for the cleanup merge: the package imports below move from
 calibrationnet.pipeline to calibrationnet.acquisition (ingest ->
-run_metadata) on the cleanup branch; nothing else changes.
+run_metadata, motion_control -> epics_controls) on the cleanup branch;
+nothing else changes.
 """
 
 import argparse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from calibrationnet.db import get_session
 from calibrationnet.models import Run
 from calibrationnet.pipeline.ingest import sync_segments
 from calibrationnet.pipeline.motion_control import fetch_settings
+from calibrationnet.pipeline.slow_controls import get_sc_engine
 from calibrationnet.pipeline.waveforms import (TICKS_PER_SECOND, available_subruns, subrun_span)
 from calibrationnet.positions import INCHES_2026, convention_for_date
 
 # the slow-controls timestamps are stored in this zone; any aware zone works
 LOCAL_ZONE = ZoneInfo("America/New_York")
+
+# The settings part of slow_controls._RUN_QUERY, verbatim, with the run-log
+# row replaced by a typed window (:t0, :t1). Keep the two in step: a column
+# added there is added here.
+_SETTINGS_OVER_WINDOW = text(
+    """
+    WITH rundata AS (
+        SELECT CAST(:t0 AS timestamptz) AS runstarttime,
+               CAST(:t1 AS timestamptz) AS runendtime
+    ),
+    udettemps AS (
+        SELECT time,
+               unnest(temperatures) AS temperatures,
+               unnest((SELECT inputnames FROM ls224_2.config
+                       WHERE time < data.time
+                       ORDER BY time DESC LIMIT 1)) AS metric
+        FROM ls224_2.data, rundata
+        WHERE time BETWEEN runstarttime AND runendtime
+    ),
+    exbvoltage AS (
+        SELECT time,
+               aivoltage[6] * (SELECT aivoltagegains[6] FROM nidaqmx.config
+                               WHERE time < data.time
+                               ORDER BY time DESC LIMIT 1) AS voltage
+        FROM nidaqmx.data, rundata
+        WHERE time BETWEEN runstarttime AND runendtime
+        UNION
+        SELECT time,
+               voltage * (SELECT CASE WHEN polarity = 'N' THEN -1 ELSE 1 END
+                          FROM hjpss_2.config
+                          WHERE time < data.time
+                          ORDER BY time DESC LIMIT 1)
+        FROM hjpss_2.data, rundata
+        WHERE time BETWEEN runstarttime AND runendtime
+    )
+    SELECT
+        (SELECT AVG(values[2]/1e6) FROM keithley6487_2.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS udet_bias,
+        (SELECT AVG(values[2]/1e6) FROM keithley6487_1.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS ldet_bias,
+        (SELECT AVG(-values[1]/1000)::integer FROM highvoltage.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS hv,
+        (SELECT AVG(values[35])::integer FROM magnet.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS main,
+        (SELECT AVG(values[34])::integer FROM magnet.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS udet,
+        (SELECT AVG(voltage) FROM exbvoltage
+         WHERE time BETWEEN runstarttime AND runendtime) AS exb,
+        (SELECT AVG(temperatures) FROM udettemps
+         WHERE time BETWEEN runstarttime AND runendtime
+           AND metric LIKE '%armor%') AS udet_armor,
+        (SELECT AVG(temperatures[1]) FROM ls224_1.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS ldet_armor,
+        (SELECT AVG(temperatures) FROM udettemps
+         WHERE time BETWEEN runstarttime AND runendtime
+           AND metric LIKE '%ring 1%') AS udet_ring,
+        (SELECT MAX(values[1]) FROM keithley6487_2.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS udet_leakage,
+        (SELECT MAX(values[1]) FROM keithley6487_1.data
+         WHERE time BETWEEN runstarttime AND runendtime) AS ldet_leakage
+    FROM rundata
+    """
+)
+
+
+def settings_over_window(start_time, end_time) -> dict:
+    """{runs-column: value} from the slow-controls instrument tables over the
+    window — what fetch_run would have returned for the run, minus the
+    run-log columns. None values are dropped so the archive can fill them."""
+    with get_sc_engine().connect() as conn:
+        row = conn.execute(_SETTINGS_OVER_WINDOW, {"t0": start_time, "t1": end_time}).mappings().first()
+    return {key: value for key, value in dict(row).items() if value is not None}
 
 
 def ticks_to_datetime(ticks: float) -> datetime:
@@ -80,7 +158,7 @@ def window_from_files(h5_dir: str, run_number: int, wave: str) -> dict:
         raise SystemExit(f"no readable '{wave}' waveforms in any subrun of run {run_number}")
     return {"start_time": ticks_to_datetime(first_ticks),
             "end_time": ticks_to_datetime(last_ticks),
-            "number_subruns": max(subruns)}
+            "number_subruns": max(subruns) + 1}     # files are 0-indexed, as the run log's lastsubrun is
 
 
 def window_from_arguments(start: str, end: str, subruns: int) -> dict:
@@ -101,6 +179,9 @@ def ingest_run_from_window(session, run_number: int, data: dict, min_dwell=None)
         run = Run(run_number=run_number)
         session.add(run)
     run_columns = {column.name for column in Run.__table__.columns} - {"run_number"}
+    # the window first, then the instrument-table settings over it (the
+    # window's own keys win)
+    data = {**settings_over_window(data["start_time"], data["end_time"]), **data}
     for key, value in data.items():
         if key in run_columns:
             setattr(run, key, value)
@@ -121,7 +202,8 @@ def main() -> None:
     parser.add_argument("--h5-dir", default=None, help="read the window from the run's h5 files in this directory")
     parser.add_argument("--start", default=None, help="run start, ISO with timezone (with --end and --subruns)")
     parser.add_argument("--end", default=None, help="run end, ISO with timezone")
-    parser.add_argument("--subruns", type=int, default=None, help="last subrun index of the run")
+    parser.add_argument("--subruns", type=int, default=None,
+                        help="number of subruns in the run (last subrun index + 1)")
     parser.add_argument("--wave", default="singles", choices=["singles", "pulsers"],
                         help="which waveforms' timestamps define the window (--h5-dir mode)")
     parser.add_argument("--min-dwell", type=float, default=None, metavar="MINUTES",
@@ -142,7 +224,7 @@ def main() -> None:
 
     duration = data["end_time"] - data["start_time"]
     print(f"run {args.run_number}: {data['start_time']} -> {data['end_time']} "
-          f"({duration}), last subrun {data['number_subruns']}")
+          f"({duration}), {data['number_subruns']} subruns")
 
     with get_session() as session:
         try:

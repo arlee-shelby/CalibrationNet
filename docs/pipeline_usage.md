@@ -84,6 +84,47 @@ a run without refitting: `python scripts/plot_stored_fits.py --run
 <run>` (draws from the database into `fit_plots/run_<run>/`,
 identical to the fit-time figures plus a "stored" tag).
 
+## When ingest says the run is not in the slow-controls database
+
+`ingest_run.py` takes a run's time window and subrun count from
+`runlog.status` in the slow-controls database. A run that was aborted or
+restarted before the DAQ closed it has no row there (first seen: run
+10081, which left no trace while 10078 and 10082 around it did), and
+ingest stops with "Run <N> not found in the slow-controls database".
+Everything else ingest stores comes from archives indexed by TIME, not
+by run number — settings from the Test archive, dwell segments from the
+motion archive — so the run can still be ingested once the window is
+supplied. `scripts/ingest_run_from_files.py` does that, then runs the
+same segment derivation and settings fetch as a normal ingest:
+
+```bash
+# the window from the data: first and last waveform timestamps of the
+# run's h5 files (on GT, where the files are; slow-controls tunnel open)
+python scripts/ingest_run_from_files.py 10081 --h5-dir <h5 dir> --dry-run
+python scripts/ingest_run_from_files.py 10081 --h5-dir <h5 dir>
+
+# or typed, from the laptop with both tunnels up (ISO times WITH timezone)
+python scripts/ingest_run_from_files.py 10081 \
+    --start "2026-10-07 18:02:11-04:00" --end "2026-10-08 00:14:50-04:00" --subruns 1722
+```
+
+`--dry-run` prints the window, the settings found and every segment with
+its position, then rolls back; drop it to store. The settings come from
+where a normal ingest reads them — the slow-controls instrument tables
+averaged over the window (the magnet currents live only there), then
+the Test archive for the 2026-epoch values — and the subrun count
+stored is the number of subruns (last index + 1), as `ingest_run`
+stores it. From there the run goes through the normal chain
+(`process_run.sh`). Confirm the run number against the files or the
+elog first: a run with no files either simply never produced data.
+
+The slow-controls tunnel for either machine: `with_sc_tunnel.sh`
+expects a `bl13-replay` alias in `~/.ssh/config` (the entries are in its
+header) and key-based login on both hops, or open the tunnel by hand in
+a second terminal with the passwords —
+`ssh -N -J <you>@analysis.sns.gov -L 15432:localhost:5432 nabreplay@bl13-replay.sns.gov`
+— and run the script plainly.
+
 ## Per-detector runs / non-default trap settings
 
 The default processes both detectors at `nabpy-standard`. When one
