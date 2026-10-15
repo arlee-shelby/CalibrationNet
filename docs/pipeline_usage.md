@@ -4,6 +4,30 @@
 run, from ingest to calibrations. Every stage is idempotent and
 pre-checked, so re-running the script continues wherever things stand.
 
+## Quick start: the commands, in order
+
+Once per installation, before the first run taken with it: sources and
+the installation seeded ("A new source installation" below). Then, per
+run:
+
+```bash
+# laptop (slow-controls tunnel + database tunnel): run metadata + segments
+./scripts/with_sc_tunnel.sh python scripts/ingest_run.py <run>
+
+# GT, repo root, environment active, checkout current (git pull):
+# everything else as one hands-off job chain (trap array -> fit array -> extraction + calibration)
+./scripts/process_run.sh <run> <h5 path>
+
+# watch, then look
+squeue -u $USER
+python scripts/pending_segments.py --runs <run> --summary   # trap outputs still missing?
+python scripts/plot_stored_fits.py --run <run>               # QA figure for every stored fit
+```
+
+Per-detector runs or non-default trap settings: see that section
+below. A run that must stay out of the database: see "Offline" at the
+end. What each stage does, and the knobs, follow.
+
 ## The stages, in order
 
 1. **Ingest** (`ingest_run.py`): run metadata + segments from slow
@@ -110,21 +134,63 @@ per-run output is identical to the global mode's placements.
 
 ## A new source installation (tray dismounted / sources swapped)
 
-1. Update `data/source_installations.csv` (which slot holds what) and
-   re-seed (`scripts/seed_source_installations.py`).
-2. Position plan BEFORE any new data exists: use the previous pool's
+Do steps 1 and 2 BEFORE ingesting the first run taken with the new
+installation: `process_run.py`'s preflight stops with "no source
+installation covers <date>" otherwise. Both seeders need the database
+tunnel.
+
+1. **New sources, if any.** Add them to `data/Current CAL2702 Sources.xlsx`
+   (two columns: Source ID like `Bi-207-9176`, Serial number like
+   `Y2-743`), then `python scripts/seed_sources.py` — idempotent, only
+   unknown labels are created. This comes first: the installation
+   seeder refuses a source label it does not know.
+2. **The installation.** In `data/source_installations.csv` put the new
+   date in `removed_on` for every row of the previous installation and
+   add one row per occupied slot: `installed_on`, source label, slot in
+   the Facing UP convention (README "Source frame slot convention"),
+   holder, notes. Empty slots have no row. Then
+   `python scripts/seed_source_installations.py` — it wipes and
+   re-inserts the whole table from the CSV, so the file is the record.
+   Commit the spreadsheet and the CSV.
+3. **Position plan BEFORE any new data exists:** use the previous pool's
    trend with the coverage slots overridden to the new contents, e.g.
    `python scripts/optimal_positions.py --runs 9464 9469
    --slots R1C2 R1C3 R2C2 R2C3 --exclude-rings 6 --tag <name>` —
    valid because the rigid tray's slopes carry over; a dismount can
    shift the frame a few mm, so treat this plan as provisional.
-3. Make the production run's FIRST dwell the verification: hitmap vs
+4. **Make the production run's FIRST dwell the verification:** hitmap vs
    the plan's predicted pixels (10 minutes settles it).
-4. Anchor the new installation from one eye-verified segment (add it
-   to `calibrationnet/positions.py` ANCHORS) — assignment for the new
-   installation's runs works from then on, and the installation's own
+5. **The verified tray position for the new mounting.** From that one
+   eye-verified segment (`python scripts/show_hitmap.py`) add an entry
+   to `VERIFIED_TRAY_POSITIONS` in `calibrationnet/positions.py`. Until
+   it exists, source assignment for the new installation's runs warns
+   and is skipped — fits and calibrations are unaffected (gate-only
+   fitting). From then on `python scripts/assign_sources.py --runs <run>`
+   followed by `--apply --runs <run>` places the sources (or
+   `process_run` does it in passing), and the installation's own
    segments feed its trend. Ordinary multi-position production runs
    ARE trend data: no raster is ever needed again.
+
+## Offline: a run that must NOT go into the database
+
+`scripts/offline/` runs the same filter -> fits -> calibration chain
+files-in, files-out: same package modules, no tunnel, nothing stored
+(full description, the dwell-run variant and the NERSC environment:
+scripts/offline/README.md). For a single-position run on GT, from the
+repo root with the environment active:
+
+```bash
+./scripts/offline/submit_trap_filter_gt.sh <h5 dir> <run>     # one compute job; the whole run = segment 0
+python scripts/offline/show_hitmap.py offline_output/filter    # where the sources sat
+python scripts/offline/show_spectra.py offline_output/filter/Run<run>_seg0_singles_filter_output_rt1250_ft50_fall1250.csv --pixels <pixels>
+python scripts/offline/fit_spectra.py offline_output/filter    # fits CSV + figures (Bi-207 recipes)
+python scripts/offline/calibrate.py offline_output/fits --kev bi207_nndc_kev.csv
+```
+
+Everything lands under `offline_output/` (gitignored). The filter CSVs
+use the cluster staging names, so if the run should end up in the
+database after all, `scripts/ingest_filter_output.py` takes them
+unchanged and the normal pipeline refits from there.
 
 ## Related documents
 

@@ -57,11 +57,16 @@ fi
 START=$((SLURM_ARRAY_TASK_ID * CHUNK + 1))
 FAILED=0
 for LINE in $(seq "$START" $((START + CHUNK - 1))); do
-    read -r RUN SEGMENT < <(sed -n "${LINE}p" "$MANIFEST")
-    if [ -z "${RUN:-}" ]; then
+    # read the line into a variable first: a bare `read` at the end of the
+    # manifest returns 1 and, under set -e, killed the last task of every
+    # array whose segment count was not a multiple of CHUNK (after its
+    # work was done — seen on run 9402, task 27, 2026-10-14)
+    ENTRY=$(sed -n "${LINE}p" "$MANIFEST")
+    if [ -z "$ENTRY" ]; then
         echo "manifest $MANIFEST ends before line $LINE — chunk done"
         break
     fi
+    read -r RUN SEGMENT <<< "$ENTRY"
     echo "task ${SLURM_ARRAY_TASK_ID} -> run ${RUN} segment ${SEGMENT}"
     # shellcheck disable=SC2086  # EXTRA_ARGS is deliberately word-split
     if ! python scripts/fit_spectra.py --run "$RUN" --segment "$SEGMENT" \
