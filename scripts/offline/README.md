@@ -32,8 +32,22 @@ scp offline_output/segments.csv <nersc>:CalibrationNet/offline_output/
 # 1. h5 subruns -> filter CSVs (whole run = segment 0; or the exported
 #    dwell windows), as compute jobs, one per segment. On GT, from the
 #    repo root with the environment active — a single-position run
-#    needs no segments file at all:
+#    needs no segments file at all; it is split into parts of
+#    SUBRUNS_PER_TASK subrun files (default 8, ~10 min of compute each),
+#    one array task per part, at most MAX_SUBMIT (40) parts per round
+#    because the QOS counts every array task against the ~50-job submit
+#    cap; a job behind each round submits the next round by itself and,
+#    when every part has its file, concatenates them into the one normal
+#    CSV (same rows as a single pass, different order) and removes the
+#    parts. A 1,700-subrun run is 6 rounds, hands-off. Re-running the
+#    script by hand redoes only the parts that are missing; the parts
+#    manifest written on the first round is reused so the split never
+#    shifts. SUBRUN_FIRST/SUBRUN_LAST take a slice of the run when that
+#    is enough for a look — the full merge of a huge run is a huge CSV,
+#    and the fit/show steps below load it whole:
 ./scripts/offline/submit_trap_filter_gt.sh /storage/.../TempCal 9416
+SUBRUN_FIRST=0 SUBRUN_LAST=47 ./scripts/offline/submit_trap_filter_gt.sh /storage/.../TempCal 9416   # first 48 subrun files only
+SUBRUNS_PER_TASK=4 ./scripts/offline/submit_trap_filter_gt.sh /storage/.../TempCal 9416              # shorter tasks
 ./scripts/offline/submit_trap_filter_gt.sh /storage/.../TempCal 9409 offline_output/segments.csv
 #    On NERSC:
 ./scripts/offline/submit_trap_filter_nersc.sh \

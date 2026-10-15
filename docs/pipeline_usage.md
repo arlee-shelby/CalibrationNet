@@ -180,7 +180,7 @@ scripts/offline/README.md). For a single-position run on GT, from the
 repo root with the environment active:
 
 ```bash
-./scripts/offline/submit_trap_filter_gt.sh <h5 dir> <run>     # one compute job; the whole run = segment 0
+./scripts/offline/submit_trap_filter_gt.sh <h5 dir> <run>     # the whole run = segment 0, filtered in parallel parts and merged into one CSV
 python scripts/offline/show_hitmap.py offline_output/filter    # where the sources sat
 python scripts/offline/show_spectra.py offline_output/filter/Run<run>_seg0_singles_filter_output_rt1250_ft50_fall1250.csv --pixels <pixels>
 python scripts/offline/fit_spectra.py offline_output/filter    # fits CSV + figures (Bi-207 recipes)
