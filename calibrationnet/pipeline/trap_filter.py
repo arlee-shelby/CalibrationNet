@@ -78,9 +78,13 @@ def segments_missing_output(session: Session, run_numbers,
     ).all())
 
     missing = defaultdict(list)
+    # recorded dwells only: a negative index is a MERGED segment
+    # (scripts/merge_segments.py), derived from other dwells' outputs and
+    # never filtered from the h5 files
     for run_number, segment_index in session.execute(
         select(RunSegment.run_number, RunSegment.segment_index)
-        .where(RunSegment.run_number.in_(run_numbers))
+        .where(RunSegment.run_number.in_(run_numbers),
+               RunSegment.segment_index >= 0)
         .order_by(RunSegment.run_number, RunSegment.segment_index)
     ).all():
         if (run_number, segment_index) not in done:

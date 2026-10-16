@@ -52,6 +52,8 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 | seed_pixels / seed_sources / seed_source_installations / seed_decay_energies | files in `data/` | pixels, sources, source_installations, isotope_decay_energies + kev_peaks tables |
 | ingest_run.py | slow-controls DB (tunnel) + motion archive | runs + run_segments tables |
 | ingest_run_from_files.py | the run's .h5 timestamps (or typed start/end) + the archives — for a run with no slow-controls run-log row | runs + run_segments tables |
+| merge_segments.py | a run's recorded dwells' trap outputs | one derived segment (negative index) with per-pixel concatenated outputs under its own trap label — rasters too short for the fit gate |
+| remove_filter_outputs.py / check_pixel_map.py | a run's stored outputs / one .h5 file | removes a run's (wrong) outputs so it can be refiltered / reports where nabPy's pixel labels disagree with the file's board-channel map |
 | submit_trap_filter.sh → apply_trap_filter.{sh,py} (cluster) | `run_list.txt` (repo root) + run .h5 files | trap_filter_outputs table AND run_pixels.board_channel (the map is read from the same h5); staging CSVs + manifest + logs under `data/TrapFilterData/` |
 | ingest_filter_output.py | a filter-output CSV | trap_filter_outputs table |
 | ingest_board_channels.py / extract_bc_maps.py | run .h5 / `data/bc_maps.csv` | run_pixels.board_channel |

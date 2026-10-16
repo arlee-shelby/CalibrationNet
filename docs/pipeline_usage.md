@@ -212,6 +212,42 @@ tunnel.
    segments feed its trend. Ordinary multi-position production runs
    ARE trend data: no raster is ever needed again.
 
+## Merged segments: when a raster's dwells are too short for the fit gate
+
+A sweep with steps smaller than a pixel (run 10075: 81 dwells of 5 min,
+0.25 inch apart) illuminates every pixel for several consecutive dwells,
+none of which alone reaches the 15,000-count gate. Merging the dwells
+PER PIXEL is physically clean — same electronics, same isotope, same run
+conditions; where the source sat within the pixel changes how many
+counts it collected, not where its lines fall — and turns the raster
+into a calibration of both faces. `scripts/merge_segments.py` builds one
+derived segment whose per-pixel output is the concatenation of the
+member dwells' energies (done inside the database), under its own trap
+label so nothing asking for the recorded label ever sees it:
+
+```bash
+python scripts/merge_segments.py --run 10075 --segments 0-80 --merged-label nabpy-standard-raster --dry-run
+python scripts/merge_segments.py --run 10075 --segments 0-80 --merged-label nabpy-standard-raster
+# then the three stages on the merged segment, directly (a long fit: one SLURM job)
+python scripts/fit_spectra.py       --run 10075 --segment -1 --tf-label nabpy-standard-raster --plot fit_plots/run_10075
+python scripts/extract_adc_peaks.py --run 10075 --segment -1 --tf-label nabpy-standard-raster
+python scripts/calibrate.py         --run 10075 --segment -1 --tf-label nabpy-standard-raster --plot fit_plots/run_10075
+```
+
+Conventions: a merged segment has a NEGATIVE index (default -1; no
+recorded dwell can be negative, so the sign says "merged"), the members'
+time span, no position (a merged dwell has no single one), and a note
+naming its members. `process_run.py` and `pending_segments.py` skip
+negative segments, so a chain re-run never tries to filter one from the
+h5 files; source assignment and the position planner are label-scoped
+and never meet them. Every fit and calibration built on it carries the
+merged label, which is how the trend queries tell it apart. Merge the
+raster dwells only and leave a long stationary dwell (10075's 504-minute
+centred dwell) as its own segment: the pixels under the sources then get
+two independent calibrations, a free consistency check. Re-running the
+merge with `--force` replaces the derived segment and everything built
+on it.
+
 ## Offline: a run that must NOT go into the database
 
 `scripts/offline/` runs the same filter -> fits -> calibration chain

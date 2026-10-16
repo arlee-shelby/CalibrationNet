@@ -59,9 +59,12 @@ def main() -> None:
     ]
 
     with get_session() as session:
+        # recorded dwells only: negative indices are merged segments
+        # (scripts/merge_segments.py), never filtered from the h5 files
         totals = dict(session.execute(
             select(RunSegment.run_number, func.count())
-            .where(RunSegment.run_number.in_(runs))
+            .where(RunSegment.run_number.in_(runs),
+                   RunSegment.segment_index >= 0)
             .group_by(RunSegment.run_number)
         ).all())
         unknown = sorted(set(runs) - set(totals))
