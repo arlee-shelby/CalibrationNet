@@ -42,6 +42,22 @@ def subrun_file(directory, run_number: int, subrun: int) -> Path:
     return Path(directory) / f"Run{run_number}_{subrun}.h5"
 
 
+def pixel_map(path) -> dict:
+    """{board channel: pixel} straight from the file's own
+    Parameters/BoardChannelToPixelMap.
+
+    Used instead of nabPy's 'pixel' header column: nabPy's DAQ 2.0 reader
+    assigns pixels by map ROW POSITION rather than by the channel number
+    in each row, so with a few rows missing it mislabeled 171 of 210
+    channels of run 10081 (2026-10). For old-DAQ files the two agree
+    exactly. Channels absent from the map get -1, which the ingest skips
+    as junk (spare channels 221-231 on DAQ 2.0)."""
+    import h5py
+    with h5py.File(path, "r") as f:
+        rows = f["Parameters/BoardChannelToPixelMap"][()]
+    return {int(board_channel): int(pixel) for board_channel, pixel in rows}
+
+
 def _headers(nab, path: Path, wave_type: str):
     waves = getattr(nab.File(str(path)), WAVE_ACCESSORS[wave_type])()
     return waves, waves.headers()
@@ -183,7 +199,10 @@ def segment_energies(directory, run_number: int, subruns,
         if hasattr(energies, "compute"):
             energies = energies.compute()
 
-        pixels = headers["pixel"].values
+        # pixel from the file's own map by board channel, not from nabPy's
+        # 'pixel' column (see pixel_map)
+        bc_to_pixel = pixel_map(path)
+        pixels = headers["bc"].map(lambda bc: bc_to_pixel.get(int(bc), -1)).values
         if mask is not None:
             energies, pixels = energies[mask], pixels[mask]
 
