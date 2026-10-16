@@ -85,10 +85,11 @@ def main() -> None:
             ratio = adc_per_kev / nominal_adc_per_kev
             scout = (fit.config or {}).get("scout_ratio")
             cal_gain = None
+            # several labels can coexist for one output: take the newest
             cal = session.execute(
                 select(Calibration)
-                .where(Calibration.trap_filter_output_id == tfo.id,
-                       Calibration.is_current)).scalars().first()
+                .where(Calibration.trap_filter_output_id == tfo.id)
+                .order_by(Calibration.created_at.desc())).scalars().first()
             if cal is not None and cal.linear_term:
                 cal_gain = (NOMINAL_RELATION["Bi-207"]["gain_kev_per_adc"]
                             / cal.linear_term)

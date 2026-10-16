@@ -30,8 +30,8 @@ class Calibration(CovarianceMixin, Base):
 
     Multiple attempts are kept — different trap settings, and
     recalibrations when the known energies are updated from simulation —
-    distinguished by `label`; a partial unique index enforces at most one
-    is_current per (run_pixel, calibration_type).
+    distinguished by `label`; identity is (trap filter output, type,
+    label) and a same-label re-run replaces in place.
 
     Uncertainty bookkeeping follows the same pattern as spectrum_fits:
     the coefficients get dedicated columns (small, fixed set, directly
@@ -45,11 +45,10 @@ class Calibration(CovarianceMixin, Base):
     """
 
     __tablename__ = "calibrations"
-    # is_current is DORMANT (bookkeeping ruling, AS 2026-08-20): labels
-    # are permanent coexisting families; identity is (trap filter
-    # output, type, label) and same-label re-runs replace in place.
-    # The old one-current-per-(run_pixel, type) partial index was
-    # dropped by migration 6ed9910381f5.
+    # the former is_current column was dropped by migration aff8f130ae93
+    # (bookkeeping ruling, AS 2026-08-20): labels are permanent coexisting
+    # families; identity is (trap filter output, type, label) and
+    # same-label re-runs replace in place
 
     id: Mapped[int] = mapped_column(primary_key=True)
     run_pixel_id: Mapped[int] = mapped_column(
@@ -88,7 +87,6 @@ class Calibration(CovarianceMixin, Base):
     # minimizer settings, ...) so any calibration can be reproduced.
     config: Mapped[Optional[dict]] = mapped_column(JSONB)
 
-    is_current: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     run_pixel: Mapped["RunPixel"] = relationship(
@@ -104,7 +102,7 @@ class Calibration(CovarianceMixin, Base):
     def __repr__(self) -> str:
         return (
             f"Calibration(id={self.id}, label={self.label}, "
-            f"type={self.calibration_type}, current={self.is_current})"
+            f"type={self.calibration_type})"
         )
 
 
