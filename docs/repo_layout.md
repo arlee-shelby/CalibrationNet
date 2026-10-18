@@ -63,6 +63,7 @@ and, once ingested, in `run_pixels.board_channel` — the transfer CSV
 | fit_spectra.py | trap_filter_outputs | spectrum_fits table; `--plot` → `fit_plots/Run*_<fitlabel>.png` |
 | extract_adc_peaks.py | spectrum_fits + decay lines | adc_peaks table |
 | calibrate.py | adc_peaks + kev_peaks | calibrations + calibration_points tables; `--plot` → `fit_plots/Run*_calibration.png` |
+| low_gain_diagnosis.py | trap_filter_outputs (+ stored calibrations for the before/after) | `fit_plots/low_gain_diagnosis/` CSV + figures: the two K lines fitted individually → gain, offset, resolution, dwell-by-dwell stability and every reason a pixel cannot be calibrated — NOTHING stored |
 | benchmark_fits.py | trap_filter_outputs | nothing (live-vs-reference fit comparison report) |
 | process_run.py | — | runs every stage above for one run, in order, idempotently |
 | pending_segments.py | database | manifest / progress report (stdout) |

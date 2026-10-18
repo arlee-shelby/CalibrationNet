@@ -154,7 +154,7 @@ directly. Run the default pass and a per-detector pass independently
 |---|---|---|
 | trap filter | rt 1250, ft 50, fall 1250 (4 ns bins), singles | `process_run.py --rt/--ft/--fall` |
 | trap label | `nabpy-standard` | `--tf-label` |
-| statistics gate | 15k CE-window counts / 300 peak height | `calibrationnet/fit_recipes.py::STATS_GATE` |
+| statistics gate | 15k CE-window counts / 300 peak height | `calibrationnet/fit_recipes.py::STATS_GATE`; one-off exception for a specific pixel: `fit_spectra.py --min-window-counts N` / `--min-peak-height H` (recorded in the fit's config as `gate_override`) |
 | fit windows/thresholds | see fit_recipes.py | `calibrationnet/fit_recipes.py` (the ONLY tunable fit file) |
 | recipe choice | assigned isotope's recipes, else Bi-207 | gate-only ruling (docs/development_plan.md) |
 | extraction match tolerance | 5 keV | `extract_adc_peaks.py --tolerance-kev` |
@@ -247,6 +247,63 @@ centred dwell) as its own segment: the pixels under the sources then get
 two independent calibrations, a free consistency check. Re-running the
 merge with `--force` replaces the derived segment and everything built
 on it.
+
+A merge assumes the pixel's gain was CONSTANT across its dwells. A pixel
+whose gain stepped mid-run shows every line twice in the merged spectrum
+(run 10075 pixel 41: the 976 line at 1249 ADC in the 20:00 dwells and
+1206 ADC after 01:00, a 3.5% step), and no fit can be right on it. The
+diagnosis below locates the 976 line dwell by dwell and flags exactly
+this; a merged-segment fit of a flagged pixel is not to be trusted —
+fit its dwell groups separately instead.
+
+## Pixels the pipeline cannot calibrate: the diagnosis
+
+When a pixel has no stored fit, the fit log says WHICH check stopped it,
+not how far the pixel has drifted or whether anything could recover it.
+`scripts/low_gain_diagnosis.py` answers that, for the group meeting and
+the hardware report, WITHOUT writing to the database: it fits the two
+strong K conversion lines (482 and 976 keV) individually — one peak in
+its own narrow window, the frozen model through the pipeline's retry
+driver, so the no-blend ruling holds — and reports the gain and offset
+with uncertainties (against the same target energies calibrate.py uses,
+so they compare with `calibration_summary`), the resolution at 976 keV,
+whether the 12 keV L/M doublets could be resolved at all, the 976
+position dwell by dwell for a merged segment, and the pixel's most
+recent stored calibration for the before/after. The verdict lists every
+reason a calibration cannot be stored, or says that only the statistics
+gate is in the way:
+
+```bash
+python scripts/low_gain_diagnosis.py --run 10075 --segment -1 --tf-label nabpy-standard-raster --pixels 41 86 96 99
+python scripts/low_gain_diagnosis.py --run 10075 --segment -1 --tf-label nabpy-standard-raster          # every uncalibrated pixel
+python scripts/low_gain_diagnosis.py --run 10075 --segment 19 --tf-label nabpy-standard --pixels 41    # one dwell of a pixel whose gain moved
+```
+
+Outputs land in `fit_plots/low_gain_diagnosis/`: one CSV per run segment
+(column names follow `calibration_summary` where the meaning matches, so
+the rows drop into the same trend plot with a different marker), the
+single-line fit figures, and a 976-position-by-dwell figure per pixel of
+a merged segment. The three obstacles it names, each with its number:
+
+- **statistics gate** — counts or peak height below the bar. When this
+  is the ONLY obstacle (10075 pixel 91: clean lines, 12,948 counts), the
+  pixel is calibratable with a gate override: `fit_spectra.py
+  --min-window-counts 12000 ...`, then extraction and calibration as
+  usual; the stored fit records the override in its config.
+- **L/M doublets unresolved** — the 976 line's FWHM in keV against the
+  12 keV doublet separation (the 6-peak fit needs about 1.5 FWHM or
+  more; 10075 pixels 86/99 are at 0.8–0.9 with sigma 6 keV, up from
+  1.4 keV in August). The 6-peak model is degenerate there and blending
+  the lines is ruled out, so nothing can be stored; the two-line
+  estimate is the record of how bad it got.
+- **gain moved during the run** — the 976 position spread across dwells
+  exceeds one sigma of the line (10075 pixel 41: 50 ADC, 6.5 sigma).
+  The merged numbers are then meaningless (the script says so) and the
+  dwell groups must be diagnosed separately.
+
+A two-line estimate is a diagnosis, not a calibration: two points sit
+below `calibrate.py`'s three-point minimum, and nothing from this script
+ever enters the database.
 
 ## Offline: a run that must NOT go into the database
 
