@@ -252,38 +252,53 @@ A merge assumes the pixel's gain was CONSTANT across its dwells. A pixel
 whose gain stepped mid-run shows every line twice in the merged spectrum
 (run 10075 pixel 41: the 976 line at 1249 ADC in the 20:00 dwells and
 1206 ADC after 01:00, a 3.5% step), and no fit can be right on it. The
-diagnosis below locates the 976 line dwell by dwell and flags exactly
+report below locates the 976 line dwell by dwell and flags exactly
 this; a merged-segment fit of a flagged pixel is not to be trusted —
 fit its dwell groups separately instead.
 
-## Pixels the pipeline cannot calibrate: the diagnosis
+## Pixels the pipeline cannot calibrate: the uncalibrated-pixel report
 
 When a pixel has no stored fit, the fit log says WHICH check stopped it,
 not how far the pixel has drifted or whether anything could recover it.
-`scripts/low_gain_diagnosis.py` answers that, for the group meeting and
-the hardware report, WITHOUT writing to the database: it fits the two
-strong K conversion lines (482 and 976 keV) individually — one peak in
-its own narrow window, the frozen model through the pipeline's retry
-driver, so the no-blend ruling holds — and reports the gain and offset
-with uncertainties (against the same target energies calibrate.py uses,
-so they compare with `calibration_summary`), the resolution at 976 keV,
-whether the 12 keV L/M doublets could be resolved at all, the 976
-position dwell by dwell for a merged segment, and the pixel's most
-recent stored calibration for the before/after. The verdict lists every
-reason a calibration cannot be stored, or says that only the statistics
-gate is in the way:
+`scripts/uncalibrated_pixel_report.py` answers that, for the group
+meeting and the hardware report, WITHOUT writing to the database: it
+fits the two strong K conversion lines (482 and 976 keV) individually —
+one peak in its own narrow window, the frozen model through the
+pipeline's retry driver, so the no-blend ruling holds — and reports the
+gain and offset with uncertainties (against the same target energies
+calibrate.py uses, so they compare with the stored calibrations), the
+resolution at 976 keV, whether the 12 keV L/M doublets could be
+resolved at all, the 976 position dwell by dwell for a merged segment,
+and the pixel's most recent stored calibration for the before/after.
+The verdict lists every reason a calibration cannot be stored, or says
+that only the statistics gate is in the way:
 
 ```bash
-python scripts/low_gain_diagnosis.py --run 10075 --segment -1 --tf-label nabpy-standard-raster --pixels 41 86 96 99
-python scripts/low_gain_diagnosis.py --run 10075 --segment -1 --tf-label nabpy-standard-raster          # every uncalibrated pixel
-python scripts/low_gain_diagnosis.py --run 10075 --segment 19 --tf-label nabpy-standard --pixels 41    # one dwell of a pixel whose gain moved
+python scripts/uncalibrated_pixel_report.py --run 10075 --segment -1 --tf-label nabpy-standard-raster --pixels 41 86 96 99
+python scripts/uncalibrated_pixel_report.py --run 10075 --segment -1 --tf-label nabpy-standard-raster          # every uncalibrated pixel of the merge
+python scripts/uncalibrated_pixel_report.py --run 10075 --segment 19 --tf-label nabpy-standard --pixels 41    # one recorded dwell
 ```
 
-Outputs land in `fit_plots/low_gain_diagnosis/`: one CSV per run segment
-(column names follow `calibration_summary` where the meaning matches, so
-the rows drop into the same trend plot with a different marker), the
-single-line fit figures, and a 976-position-by-dwell figure per pixel of
-a merged segment. The three obstacles it names, each with its number:
+Run it on the MERGED segment: a pixel whose gain was stable gets one row
+there, and a pixel whose merge is unusable — its gain moved during the
+run, fewer than two strong dwells exist to show that it held still, or
+one of its merged lines could not be fitted — gets its merged row
+flagged followed automatically by one row per member dwell with enough
+signal (`--no-dwell-split` turns that off), so the trend plot gets one
+honest point per dwell instead of a meaningless merged one. A row's
+`estimate_reliable` is True only when the gain demonstrably held still,
+both K lines were fitted, AND the two-line offset is within 10 keV of
+zero: a
+line whose fit was rejected on every window falls back to the peak
+finder's position, which can sit on the wrong bump on a weak dwell, and
+a misidentified line gives an offset of tens of keV, so such rows are
+kept for the record but flagged off the trend plot. Outputs land in
+`fit_plots/uncalibrated_pixel_report/`: one CSV per run segment with one
+row per reported (run, segment, pixel) — it accumulates, so reporting
+more pixels later adds their rows and replaces only theirs — the
+single-line fit figures, and
+a 976-position-by-dwell figure per pixel of a merged segment. The three
+obstacles it names, each with its number:
 
 - **statistics gate** — counts or peak height below the bar. When this
   is the ONLY obstacle (10075 pixel 91: clean lines, 12,948 counts), the
@@ -291,17 +306,66 @@ a merged segment. The three obstacles it names, each with its number:
   --min-window-counts 12000 ...`, then extraction and calibration as
   usual; the stored fit records the override in its config.
 - **L/M doublets unresolved** — the 976 line's FWHM in keV against the
-  12 keV doublet separation (the 6-peak fit needs about 1.5 FWHM or
-  more; 10075 pixels 86/99 are at 0.8–0.9 with sigma 6 keV, up from
-  1.4 keV in August). The 6-peak model is degenerate there and blending
-  the lines is ruled out, so nothing can be stored; the two-line
-  estimate is the record of how bad it got.
-- **gain moved during the run** — the 976 position spread across dwells
-  exceeds one sigma of the line (10075 pixel 41: 50 ADC, 6.5 sigma).
-  The merged numbers are then meaningless (the script says so) and the
-  dwell groups must be diagnosed separately.
+  12 keV doublet separation. Above 1.5 FWHM the 6-peak fit is
+  comfortable; between 1.0 and 1.5 it is marginal (on 10075, pixel 1021
+  converged at 1.10 and pixel 1028 failed at 1.17 — the report says
+  "marginal, see its fit log"); below 1.0 it has never converged (10075
+  pixels 86/99 at 0.8–0.9 with sigma 6 keV, up from 1.4 keV in August).
+  The 6-peak model is degenerate there and blending the lines is ruled
+  out, so nothing can be stored; the two-line estimate is the record of
+  how bad it got.
+- **gain moved during the run** — the 976 position spread across the
+  strong dwells (976 peak at least 50 counts high; weaker dwells jitter
+  by a few ADC on their own) exceeds one sigma of the line (10075 pixel
+  41: 43 ADC, over 5 sigma). The merged numbers are then meaningless
+  (the script says so) and the dwells are reported one by one.
 
-A two-line estimate is a diagnosis, not a calibration: two points sit
+### Putting the report's pixels on the trend plots
+
+The CSV uses the calibration queries' column names wherever the meaning
+matches (`run`, `segment`, `pixel`, `gain_kev_per_adc`, `gain_error`,
+`constant_kev`, `constant_error`, `ce976_sigma_kev`, ...) and carries
+`segment_start`, so its rows concatenate with `calibration_map()` output
+and plot with a second marker:
+
+```python
+from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+from sqlalchemy import select
+from calibrationnet.db import get_session
+from calibrationnet.models import RunSegment
+from calibrationnet.queries import calibration_map
+
+with get_session() as session:
+    segments = pd.DataFrame([
+        {"run": seg.run_number, "segment": seg.segment_index, "segment_start": seg.start_time}
+        for seg in session.scalars(select(RunSegment))])
+stored = calibration_map(run_numbers=[9415, 9416, 9469, 9521, 10075],
+                         calibration_type="linear").merge(segments, on=["run", "segment"])
+report = pd.concat(pd.read_csv(path, parse_dates=["segment_start"]) for path in
+                   Path("fit_plots/uncalibrated_pixel_report").glob("Run*_uncalibrated_pixel_report.csv"))
+report = report[report.estimate_reliable]     # keeps rows whose gain held still AND whose two lines were both FITTED
+
+pixel = 86
+cal = stored[stored.pixel == pixel].sort_values("segment_start")
+est = report[report.pixel == pixel].sort_values("segment_start")
+fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(5, 7))
+ax1.errorbar(cal.segment_start, cal.gain_kev_per_adc, yerr=cal.gain_error, fmt="o", label="calibration")
+ax1.errorbar(est.segment_start, est.gain_kev_per_adc, yerr=est.gain_error, fmt="s", mfc="none",
+             label="two-line estimate (not calibratable)")
+ax1.set_ylabel("Gain (keV/ADC)"); ax1.set_title(f"Pixel {pixel}"); ax1.legend()
+ax2.scatter(cal.segment_start, cal.constant_error)
+ax2.scatter(est.segment_start, est.constant_error, marker="s", facecolors="none", edgecolors="C1")
+ax2.axhline(0.3, color="red", label="0.1% req."); ax2.set_ylabel("Offset uncertainty (keV)")
+```
+
+Mind the two offset uncertainties: a stored calibration's comes from the
+residual scatter of its six points, the two-line estimate's is
+propagated from its two centroid errors (two points have no scatter), so
+the estimate's is a lower bound.
+
+A two-line estimate is a report, not a calibration: two points sit
 below `calibrate.py`'s three-point minimum, and nothing from this script
 ever enters the database.
 

@@ -1,4 +1,4 @@
-"""Diagnose pixels the pipeline cannot calibrate: how far the gain
+"""Report on the pixels the pipeline cannot calibrate: how far the gain
 moved, how bad the resolution got, and WHY no calibration can be
 stored — the numbers behind "this pixel is out", for the group meeting
 and the hardware report (AS request, 2026-10-18).
@@ -14,10 +14,13 @@ but the two strong K lines (482 and 976 keV) are still single,
 well-separated peaks, and THEY can be measured:
 
 1. each K line is fitted INDIVIDUALLY — one peak in its own narrow
-   window — with the same frozen model and retry driver the pipeline
-   uses (calibrationnet/fitting.run_recipe), so the ruling holds. When
-   even that fit is rejected, the line's position is read off the
-   smoothed histogram (half-bin uncertainty) and flagged as such;
+   window, on a ladder of windows from wide to narrow — with the same
+   frozen model and retry driver the pipeline uses
+   (calibrationnet/fitting.run_recipe), so the ruling holds. When even
+   that is rejected, the line's position is read off the smoothed
+   histogram (half-bin uncertainty) and the row is flagged
+   (estimate_reliable False): such a position can sit on the wrong
+   bump, so it never goes on the trend plot;
 2. the two positions give gain and offset with propagated
    uncertainties, against the SAME target energies calibrate.py uses
    (its choose_kev policy: simulation kev_peaks rows plus the run-HV
@@ -28,26 +31,39 @@ well-separated peaks, and THEY can be measured:
 4. for a MERGED segment (negative index, scripts/merge_segments.py)
    the 976 line is located dwell by dwell: a merge assumes the gain
    was constant across its dwells, and a pixel whose gain stepped
-   mid-run shows every line twice (run 10075 pixel 41: 3.5%);
+   mid-run shows every line twice (run 10075 pixel 41: 3.5%). Such a
+   pixel's merged row is flagged (estimate_reliable False) and its
+   dwells with enough signal are then reported one by one, so the
+   trend plot gets one honest point per dwell instead;
 5. the pixel's most recent stored calibration is printed beside the
    estimate — the "impact" column of the story.
 
 The verdict names every reason the pipeline cannot store a calibration
 for the pixel. NOTHING here is written to the database: a two-line
 estimate has two points, below calibrate.py's three-point minimum —
-it is a diagnosis, not a calibration.
+it is a report, not a calibration.
 
-    python scripts/low_gain_diagnosis.py --run 10075 --segment -1 \\
+    python scripts/uncalibrated_pixel_report.py --run 10075 --segment -1 \\
         --tf-label nabpy-standard-raster --pixels 41 86 96 99
-    python scripts/low_gain_diagnosis.py --run 10075 --segment -1 \\
+    python scripts/uncalibrated_pixel_report.py --run 10075 --segment -1 \\
         --tf-label nabpy-standard-raster     # every uncalibrated pixel
 
-Outputs (default fit_plots/low_gain_diagnosis/): one CSV per run
-segment using calibration_summary's column names wherever the meaning
-matches (gain_kev_per_adc, gain_error, constant_kev, ce976_sigma_kev,
-...) so the rows drop into the same trend plot as the stored
-calibrations; the single-line fit figures; and, for a merged segment,
-a 976-position-by-dwell figure per pixel.
+Outputs (default fit_plots/uncalibrated_pixel_report/): one CSV per
+run segment (Run<run>_seg<segment>_uncalibrated_pixel_report.csv) that
+ACCUMULATES across invocations — reporting more pixels later adds
+their rows and replaces only theirs — with one row per reported (run,
+segment, pixel), using the calibration
+queries' column names wherever the meaning matches (run, segment,
+pixel, gain_kev_per_adc, gain_error, constant_kev, constant_error,
+ce976_sigma_kev, ...) plus segment_start, so the rows concatenate
+with calibration_map()/calibration_summary() output into the same
+trend plot (recipe: docs/pipeline_usage.md, "Pixels the pipeline
+cannot calibrate"); the single-line fit figures; and, for a merged
+segment, a 976-position-by-dwell figure per pixel. Note the two
+offset uncertainties mean different things: a stored calibration's
+comes from the residual scatter of its points, the two-line
+estimate's is propagated from the two centroid errors (two points
+have no scatter), so the latter is the lower bound.
 """
 import argparse
 import csv
@@ -74,10 +90,16 @@ from calibrationnet.queries import line_energies
 # sys.path, which is what makes this import resolve.
 from calibrate import choose_kev
 
-# Single-line fit window around each K line, in keV: room for the
-# low-energy tail below and flat background above, ending before the
-# next line (the same shell's L line sits 72 keV up).
-LINE_WINDOW_KEV = (-50.0, 45.0)
+# Single-line fit windows around each K line, in keV, tried in order:
+# the wide one has room for the low-energy tail below and flat
+# background above (ending before the same shell's L line, 72 keV up);
+# the narrower ones rescue a line whose wide window holds a shoulder or
+# a neighbour's foot (10075 pixel 99's 482 line fits only at +-20 keV).
+LINE_WINDOWS_KEV = ((-50.0, 45.0), (-30.0, 30.0), (-20.0, 20.0))
+# A real pixel's offset against the calibration-target energies is a
+# few keV at most (stored calibrations: within +-1 keV; the worst
+# low-gain pixels ~3 keV). Far beyond that, one line was misidentified.
+OFFSET_SANITY_KEV = 10.0
 # One-peak plan for a K line (same keys as the Bi-207 recipes). The
 # starting width is in ADC: the noise width stays ~4-6 ADC however far
 # the gain drops, so the same guesses serve every pixel.
@@ -85,19 +107,29 @@ LINE_PLAN = dict(n_peaks=1,
                  peak_finder=(5, None, 20, 15, 1, None, 0.5, None),
                  widths={"sig1": 4},
                  retry_widths=("measured", "measured x 2", {"sig1": 8}))
-# The 6-peak fit resolves an L/M doublet when its 12 keV separation is
-# at least this many FWHM of the 976 line: pixel 96's August 2026 fits
-# converged at 1.5 (FWHM 8 keV); pixels 86/99 in October are degenerate
-# at 0.8-0.9 (FWHM 14-15 keV).
+# How well the 6-peak fit can see an L/M doublet (12 keV apart) at the
+# pixel's resolution, in units of the 976 line's FWHM: at 1.5 and above
+# the fit is comfortable (pixel 96's August 2026 fits, FWHM 8 keV);
+# between 1.0 and 1.5 it may or may not converge (run 10075: pixel 1021
+# converged at 1.10, pixel 1028 failed at 1.17); below 1.0 it has never
+# converged (10075 pixels 86/99 at 0.82-0.88, FWHM 14-15 keV, are
+# degenerate).
 DOUBLET_RESOLVED_FWHM = 1.5
+DOUBLET_DEGENERATE_FWHM = 1.0
 FWHM_PER_SIGMA = 2.3548
-# A dwell contributes a 976 position when its CE window holds this much
-# signal (one raster dwell is ~1/80 of the merge).
+# A dwell is listed with its 976 position when its CE window holds this
+# much signal (one raster dwell is ~1/80 of the merge) ...
 DWELL_MIN_COUNTS = 300
 DWELL_MIN_HEIGHT = 15
+# ... but only dwells whose 976 peak is at least this high decide
+# whether the gain moved: the position is the smoothed histogram's
+# maximum, which on a 20-count peak jitters by a few ADC on its own
+# (10075 pixel 1028: weak dwells scatter 1077-1084, the strong ones sit
+# at 1080-1081).
+DWELL_STABILITY_MIN_HEIGHT = 50
 # The gain "moved during the run" when the 976 position spread across
-# dwells exceeds this many sigma of the line itself — the merged line
-# is then visibly wider than the line.
+# the strong dwells exceeds this many sigma of the line itself — the
+# merged line is then visibly wider than the line.
 MOVED_SIGMA = 1.0
 HALF_BIN_ADC = 0.5
 
@@ -188,11 +220,11 @@ def window_relation(data, isotope_name, scout_ratio) -> dict:
     return relation
 
 
-def line_window(energy, relation) -> tuple:
-    """ADC window around one line from the relation and LINE_WINDOW_KEV."""
+def line_window(energy, relation, kev_window) -> tuple:
+    """ADC window around one line from the relation and a keV window."""
     gain, constant = relation["gain_kev_per_adc"], relation["constant_kev"]
-    window = (int((energy + LINE_WINDOW_KEV[0] - constant) / gain),
-              int((energy + LINE_WINDOW_KEV[1] - constant) / gain))
+    window = (int((energy + kev_window[0] - constant) / gain),
+              int((energy + kev_window[1] - constant) / gain))
     return window
 
 
@@ -213,35 +245,47 @@ def peak_finder_estimate(hist, smoothed, window) -> dict:
     estimate = {"centroid": float(lo + peak), "centroid_err": HALF_BIN_ADC,
                 "sigma": (right - left) / FWHM_PER_SIGMA, "sigma_err": None,
                 "amplitude": float(excess[peak]), "redchi": None,
+                "window": window,
                 "method": "peak finder (single-line fit rejected)"}
     return estimate
 
 
-def fit_line(data, energy, window, plot_path) -> dict:
+def fit_line(data, energy, relation, plot_path) -> dict:
     """One K line fitted alone with the frozen model through the
-    pipeline's retry driver. None when every attempt is rejected."""
-    plan = dict(LINE_PLAN, label=f"k{energy:.0f}-1peak", bounds=window)
-    result, _bounds, config = run_recipe(data, plan, 1.0, plot_path, None)
-    if result is None:
-        if plot_path is not None:
-            try:
-                plot_failed_spectrum(
-                    data, plan, 1.0, None, plot_path,
-                    note="single-line fit rejected — peak-finder "
-                         "estimate used")
-            except Exception as exc:        # a figure never stops the report
-                print(f"    (no failure figure: {exc})")
-        estimate = None
-    else:
-        pars = result.params
-        estimate = {"centroid": pars["cen1"].value,
-                    "centroid_err": pars["cen1"].stderr,
-                    "sigma": pars["sig1"].value,
-                    "sigma_err": pars["sig1"].stderr,
-                    "amplitude": pars["amp1"].value,
-                    "redchi": result.redchi,
-                    "method": f"fit ({config['attempt']}, "
-                              f"reduced chi2 {result.redchi:.2f})"}
+    pipeline's retry driver, on each window of the ladder until one is
+    accepted. None when every window is rejected (the failure figure
+    then shows the widest window)."""
+    estimate = None
+    for kev_window in LINE_WINDOWS_KEV:
+        window = line_window(energy, relation, kev_window)
+        plan = dict(LINE_PLAN, label=f"k{energy:.0f}-1peak", bounds=window)
+        result, _bounds, config = run_recipe(data, plan, 1.0, plot_path,
+                                             None)
+        if result is not None:
+            pars = result.params
+            estimate = {"centroid": pars["cen1"].value,
+                        "centroid_err": pars["cen1"].stderr,
+                        "sigma": pars["sig1"].value,
+                        "sigma_err": pars["sig1"].stderr,
+                        "amplitude": pars["amp1"].value,
+                        "redchi": result.redchi, "window": window,
+                        "method": f"fit ({config['attempt']}, reduced chi2 "
+                                  f"{result.redchi:.2f}, window "
+                                  f"{kev_window[0]:+.0f}/{kev_window[1]:+.0f}"
+                                  " keV)"}
+            break
+        print(f"    (no accepted fit on the {kev_window[0]:+.0f}/"
+              f"{kev_window[1]:+.0f} keV window {window})")
+    if estimate is None and plot_path is not None:
+        plan = dict(LINE_PLAN, label=f"k{energy:.0f}-1peak",
+                    bounds=line_window(energy, relation, LINE_WINDOWS_KEV[0]))
+        try:
+            plot_failed_spectrum(
+                data, plan, 1.0, None, plot_path,
+                note="single-line fit rejected on every window — "
+                     "peak-finder estimate used")
+        except Exception as exc:        # a figure never stops the report
+            print(f"    (no failure figure: {exc})")
     return estimate
 
 
@@ -267,15 +311,21 @@ def resolution(estimate_hi, gain, doublet_kev) -> dict:
     sigma_kev = estimate_hi["sigma"] * gain
     fwhm_kev = FWHM_PER_SIGMA * sigma_kev
     sigma_err = estimate_hi["sigma_err"]
+    ratio = doublet_kev / fwhm_kev
+    if ratio >= DOUBLET_RESOLVED_FWHM:
+        status = "resolved"
+    elif ratio >= DOUBLET_DEGENERATE_FWHM:
+        status = "marginal"
+    else:
+        status = "unresolved"
     report = {"ce976_sigma_adc": estimate_hi["sigma"],
               "ce976_sigma_error_adc": sigma_err,
               "ce976_sigma_kev": sigma_kev,
               "ce976_sigma_error_kev": (sigma_err * gain
                                         if sigma_err is not None else None),
               "ce976_fwhm_kev": fwhm_kev,
-              "doublet_over_fwhm": doublet_kev / fwhm_kev,
-              "doublets_resolved":
-                  doublet_kev / fwhm_kev >= DOUBLET_RESOLVED_FWHM}
+              "doublet_over_fwhm": ratio,
+              "doublet_status": status}
     return report
 
 
@@ -315,22 +365,26 @@ def dwell_positions(session, run, pixel, label, isotope_name) -> list:
         if counts >= DWELL_MIN_COUNTS and height >= DWELL_MIN_HEIGHT:
             positions.append({"segment": segment, "start_time": start_time,
                               "waveforms": len(data), "counts": counts,
+                              "height": height,
                               "position_adc": ratio * anchor["nominal_adc"]})
     return positions
 
 
 def stability(positions, sigma_adc) -> dict:
-    """Spread of the 976 position across dwells, in ADC and in units of
-    the line's own width; 'moved' when it exceeds MOVED_SIGMA."""
-    if len(positions) < 2:
-        report = {"n_dwells": len(positions), "spread_adc": None,
-                  "spread_sigma": None, "moved": False}
+    """Spread of the 976 position across the STRONG dwells (peak height
+    >= DWELL_STABILITY_MIN_HEIGHT), in ADC and in units of the line's
+    own width; 'moved' when it exceeds MOVED_SIGMA. Fewer than two
+    strong dwells cannot judge, and count as not moved."""
+    strong = [p for p in positions if p["height"] >= DWELL_STABILITY_MIN_HEIGHT]
+    if len(strong) < 2:
+        report = {"n_dwells": len(positions), "n_strong": len(strong),
+                  "spread_adc": None, "spread_sigma": None, "moved": False}
     else:
-        values = [p["position_adc"] for p in positions]
+        values = [p["position_adc"] for p in strong]
         spread = max(values) - min(values)
         spread_sigma = spread / sigma_adc if sigma_adc else None
-        report = {"n_dwells": len(positions), "spread_adc": spread,
-                  "spread_sigma": spread_sigma,
+        report = {"n_dwells": len(positions), "n_strong": len(strong),
+                  "spread_adc": spread, "spread_sigma": spread_sigma,
                   "moved": (spread_sigma is not None
                             and spread_sigma > MOVED_SIGMA)}
     return report
@@ -385,27 +439,40 @@ def verdict(gate, resolved, stable, doublet_kev) -> tuple:
             f"(needs >= {bar['min_window_counts']}), peak height "
             f"{gate['ce_peak_height']:.0f} (needs >= "
             f"{bar['min_peak_height']})")
-    if not resolved["doublets_resolved"]:
+    hard = False                       # a reason no retry can remove
+    if resolved["doublet_status"] == "unresolved":
+        hard = True
         reasons.append(
             f"L/M doublets unresolved: {doublet_kev:.1f} keV apart = "
             f"{resolved['doublet_over_fwhm']:.2f} FWHM of the 976 line "
-            f"(sigma {resolved['ce976_sigma_kev']:.2f} keV; the 6-peak fit "
-            f"needs >= {DOUBLET_RESOLVED_FWHM}) — the 6-peak model is "
-            "degenerate and blending is ruled out")
+            f"(sigma {resolved['ce976_sigma_kev']:.2f} keV; below "
+            f"{DOUBLET_DEGENERATE_FWHM} the 6-peak fit has never converged) "
+            "— the 6-peak model is degenerate and blending is ruled out")
+    elif resolved["doublet_status"] == "marginal":
+        reasons.append(
+            f"L/M doublets marginal: {doublet_kev:.1f} keV apart = "
+            f"{resolved['doublet_over_fwhm']:.2f} FWHM of the 976 line "
+            f"(sigma {resolved['ce976_sigma_kev']:.2f} keV) — 6-peak fits "
+            "have converged at 1.10 and failed at 1.17 here; check this "
+            "pixel's fit log")
     if stable["moved"]:
+        hard = True
         reasons.append(
             f"gain moved during the run: the 976 line spans "
-            f"{stable['spread_adc']:.0f} ADC across {stable['n_dwells']} "
-            f"dwells ({stable['spread_sigma']:.1f} sigma of the line) — the "
-            "merged spectrum shows every line twice")
+            f"{stable['spread_adc']:.0f} ADC across {stable['n_strong']} "
+            f"strong dwells ({stable['spread_sigma']:.1f} sigma of the "
+            "line) — the merged spectrum shows every line twice")
     if not reasons:
         text = ("no obstacle found here — the pipeline should fit this "
                 "pixel; see its fit log")
     elif len(reasons) == 1 and not gate["passes"]:
         text = ("calibratable with a gate override (fit_spectra.py "
                 "--min-window-counts / --min-peak-height)")
-    else:
+    elif hard:
         text = "not calibratable by the pipeline"
+    else:
+        text = ("not calibrated by the pipeline — marginal resolution; "
+                "see its fit log")
     return text, reasons
 
 
@@ -449,11 +516,15 @@ def pixel_targets(session, detector, source_id, ctx) -> dict:
     return targets
 
 
-def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
+def report_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
     """Everything above for one pixel's output; prints the block and
-    returns the CSV row."""
+    returns {"row": the CSV row, "moved": gain moved during the run,
+    "dwells": the dwell positions found (merged segment only),
+    "dwell_label": their trap label}."""
     isotope_name = ctx["isotope"]
     detector = "upper" if pixel < 1000 else "lower"
+    segment_row = session.get(RunSegment, (run, segment))
+    segment_start = segment_row.start_time if segment_row else None
     data = np.asarray(tfo.energies)
     hist, smoothed = histogram(data)
     gate = gate_report(data, hist, smoothed, isotope_name)
@@ -467,15 +538,16 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
 
     estimates = {}
     for energy in (energy_lo, energy_hi):
-        window = line_window(energy, relation)
         plot_path = (ctx["out"] / f"Run{run}_seg{segment}_pix{pixel}"
                      f"_k{energy:.0f}.png" if ctx["out"] else None)
-        estimate = fit_line(data, energy, window, plot_path)
+        estimate = fit_line(data, energy, relation, plot_path)
         if estimate is None:
-            estimate = peak_finder_estimate(hist, smoothed, window)
+            estimate = peak_finder_estimate(
+                hist, smoothed,
+                line_window(energy, relation, LINE_WINDOWS_KEV[0]))
         estimates[energy] = estimate
         sigma_err = estimate["sigma_err"]
-        print(f"  {energy:.0f} keV line: window {window}, position "
+        print(f"  {energy:.0f} keV line: window {estimate['window']}, position "
               f"{estimate['centroid']:.2f} ± {estimate['centroid_err']:.2f} "
               f"ADC, sigma {estimate['sigma']:.2f}"
               f"{f' ± {sigma_err:.2f}' if sigma_err is not None else ''} "
@@ -509,30 +581,39 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
           f" keV (FWHM {resolved['ce976_fwhm_kev']:.1f} keV); L/M doublets "
           f"{ctx['doublet_kev']:.1f} keV apart = "
           f"{resolved['doublet_over_fwhm']:.2f} FWHM -> "
-          f"{'resolvable' if resolved['doublets_resolved'] else 'NOT resolvable'}")
+          f"{resolved['doublet_status']}")
 
-    positions = []
+    positions, label = [], None
     stable = stability(positions, None)
     if segment < 0:
         label = member_label(tfo, ctx["member_label"])
         positions = dwell_positions(session, run, pixel, label, isotope_name)
         stable = stability(positions, estimates[energy_hi]["sigma"])
         print(f"  976 position dwell by dwell ({label}, {len(positions)} "
-              f"dwells with enough signal):")
+              f"dwells with enough signal, {stable['n_strong']} strong "
+              f"enough to judge the spread):")
         for p in positions:
+            weak = ("" if p["height"] >= DWELL_STABILITY_MIN_HEIGHT
+                    else "  (weak: not used for the spread)")
             print(f"    seg {p['segment']:>3} {p['start_time']:%m-%d %H:%M} "
                   f"wf={p['waveforms']:>6} CE counts={p['counts']:>5} "
-                  f"976 K at {p['position_adc']:6.0f} ADC")
+                  f"height={p['height']:4.0f} 976 K at "
+                  f"{p['position_adc']:6.0f} ADC{weak}")
         if stable["spread_adc"] is not None:
             print(f"    spread {stable['spread_adc']:.0f} ADC = "
                   f"{stable['spread_sigma']:.1f} sigma of the line -> "
                   f"{'MOVED during the run' if stable['moved'] else 'stable'}")
+        elif positions:
+            print("    (fewer than two strong dwells — the spread cannot "
+                  "be judged)")
         if stable["moved"]:
             print("  CAUTION: the gain, offset and resolution above are NOT "
-                  "meaningful — every line is double in the merge. "
-                  "Diagnose the dwells separately, ex: --segment "
-                  f"{positions[0]['segment']} --tf-label {label} --pixels "
-                  f"{pixel}")
+                  "meaningful — every line is double in the merge"
+                  + (" (its dwells are reported one by one below)"
+                     if ctx["dwell_split"] else
+                     f"; report the dwells separately, ex: --segment "
+                     f"{positions[0]['segment']} --tf-label {label} "
+                     f"--pixels {pixel}"))
         if ctx["out"] and positions:
             plot_dwell_positions(
                 positions, estimates[energy_hi], pixel,
@@ -561,16 +642,53 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
                   f"{target['constant_kev'] - last['constant_kev']:+.2f} keV"
                   f"{resolution_change}")
 
+    # A row is trend-plot material only when the gain held still, BOTH
+    # lines were fitted (a peak-finder position on a weak dwell can sit
+    # on the wrong bump while claiming a half-bin error) and the offset
+    # is physical (a misidentified line gives tens of keV).
+    lines_fitted = sum(1 for e in estimates.values()
+                       if e["method"].startswith("fit"))
+    offset_sane = (not comparable
+                   or abs(target["constant_kev"]) <= OFFSET_SANITY_KEV)
+    # A merge with fewer than two strong dwells cannot show that its gain
+    # held still (10075 pixel 96: one strong dwell, and its merged 976
+    # line is a double peak fitted as one broad one) — unjudged, so not
+    # trusted; its dwells speak for themselves instead.
+    unjudged = segment < 0 and bool(positions) and stable["n_strong"] < 2
+    reliable = (not stable["moved"] and not unjudged and lines_fitted == 2
+                and offset_sane)
+    # A merge whose lines cannot be fitted, or whose stability cannot be
+    # judged, is as useless as a moved one: either way the dwells are
+    # reported one by one.
+    split = segment < 0 and bool(positions) and (
+        stable["moved"] or unjudged or lines_fitted < 2)
+    if unjudged and not stable["moved"]:
+        print("  NOTE: fewer than two strong dwells — the merge cannot "
+              "show that the gain held still; row flagged "
+              "(estimate_reliable False)"
+              + (" and its dwells are reported one by one below"
+                 if ctx["dwell_split"] else ""))
+    if lines_fitted < 2 and not stable["moved"]:
+        print("  NOTE: a line position comes from the peak finder, not a "
+              "fit — the row is flagged (estimate_reliable False)"
+              + (" and its dwells are reported one by one below"
+                 if split and ctx["dwell_split"] else
+                 " and should stay off the trend plot"))
+    if not offset_sane:
+        print(f"  WARNING: offset {target['constant_kev']:+.1f} keV is far "
+              "from the few keV a real pixel shows — one line is probably "
+              "misidentified; row flagged (estimate_reliable False)")
+
     text, reasons = verdict(gate, resolved, stable, ctx["doublet_kev"])
     print(f"  VERDICT: {text}")
     for reason in reasons:
         print(f"    - {reason}")
-    print("    (this two-line estimate is a diagnosis, not a calibration: "
+    print("    (a two-line estimate is a report, not a calibration: "
           "2 points < calibrate.py's 3-point minimum, nothing stored)")
 
     row = {
-        "run": run, "segment": segment, "pixel": pixel,
-        "detector": detector, "tf_label": tfo.label,
+        "run": run, "segment": segment, "segment_start": segment_start,
+        "pixel": pixel, "detector": detector, "tf_label": tfo.label,
         "waveforms": len(data),
         "scout_ratio": round(gate["scout_ratio"], 4),
         "ce_window_counts": gate["ce_window_counts"],
@@ -583,7 +701,8 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
         "k976_error_adc": estimates[energy_hi]["centroid_err"],
         "k976_method": estimates[energy_hi]["method"],
         "energy_convention": convention,
-        "estimate_reliable": not stable["moved"],
+        "estimate_reliable": reliable,
+        "lines_fitted": lines_fitted,
         "gain_kev_per_adc": target["gain_kev_per_adc"],
         "gain_error": target["gain_error"],
         "constant_kev": target["constant_kev"],
@@ -597,7 +716,9 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
         "ce976_sigma_error_kev": resolved["ce976_sigma_error_kev"],
         "ce976_fwhm_kev": resolved["ce976_fwhm_kev"],
         "doublet_over_fwhm": resolved["doublet_over_fwhm"],
+        "doublet_status": resolved["doublet_status"],
         "n_dwells": stable["n_dwells"],
+        "n_strong_dwells": stable["n_strong"],
         "dwell_976_spread_adc": stable["spread_adc"],
         "dwell_976_spread_sigma": stable["spread_sigma"],
         "last_cal_run": last["run"] if last else None,
@@ -608,7 +729,44 @@ def diagnose_pixel(session, run, segment, pixel, source_id, tfo, ctx) -> dict:
         "verdict": text,
         "reasons": " | ".join(reasons),
     }
-    return row
+    if stable["moved"]:
+        split_reason = "gain moved during the run"
+    elif unjudged:
+        split_reason = "the merge's stability cannot be judged"
+    else:
+        split_reason = "a merged line could not be fitted"
+    report = {"row": row, "moved": stable["moved"], "split": split,
+              "split_reason": split_reason,
+              "dwells": positions, "dwell_label": label}
+    return report
+
+
+def dwell_reports(session, run, pixel, source_id, report, ctx) -> list:
+    """A pixel whose merge is unusable (gain moved, stability unjudged,
+    or a merged line could not be fitted) has its member dwells reported one by one —
+    the dwells with enough signal found by the merged report — each a
+    time-stamped row for the trend plot, reliable or flagged on its own
+    merits. The merged row stays, flagged."""
+    label = report["dwell_label"]
+    print(f"\n--- pixel {pixel}: {report['split_reason']} — its "
+          f"{len(report['dwells'])} dwells with enough signal, one by "
+          "one ---")
+    rows = []
+    for dwell in report["dwells"]:
+        tfo = session.execute(
+            select(TrapFilterOutput)
+            .join(RunPixel, TrapFilterOutput.run_pixel_id == RunPixel.id)
+            .where(RunPixel.run_number == run,
+                   RunPixel.segment_index == dwell["segment"],
+                   RunPixel.pixel_number == pixel,
+                   TrapFilterOutput.label == label)
+        ).scalars().first()
+        if tfo is None:
+            continue
+        dwell_report = report_pixel(session, run, dwell["segment"], pixel,
+                                    source_id, tfo, ctx)
+        rows.append(dwell_report["row"])
+    return rows
 
 
 def main() -> None:
@@ -620,7 +778,7 @@ def main() -> None:
                         help="segment index; a merged segment is negative "
                              "(default 0)")
     parser.add_argument("--pixels", type=int, nargs="+", default=None,
-                        help="pixels to diagnose; default: every pixel of "
+                        help="pixels to report; default: every pixel of "
                              "the segment whose output has NO calibration")
     parser.add_argument("--tf-label", default="nabpy-standard",
                         help="trap filter outputs to read (a merged "
@@ -632,15 +790,19 @@ def main() -> None:
                              "record it")
     parser.add_argument("--isotope", default="Bi-207",
                         help="only isotopes with gain-scout anchors "
-                             "(fit_recipes.SCOUT_ANCHORS) can be diagnosed")
+                             "(fit_recipes.SCOUT_ANCHORS) can be reported")
+    parser.add_argument("--no-dwell-split", action="store_true",
+                        help="do not report the dwells one by one after a "
+                             "flagged merged row (gain moved, or a merged "
+                             "line could not be fitted)")
     parser.add_argument("--calibration-label", default="jin2026a",
                         help="calibration label for the 'last stored "
                              "calibration' comparison")
     parser.add_argument("--out", type=Path,
-                        default=Path("fit_plots/low_gain_diagnosis"),
+                        default=Path("fit_plots/uncalibrated_pixel_report"),
                         metavar="DIR",
                         help="CSV + figures go here (default "
-                             "fit_plots/low_gain_diagnosis/)")
+                             "fit_plots/uncalibrated_pixel_report/)")
     parser.add_argument("--no-plot", action="store_true",
                         help="skip the figures (the CSV is still written "
                              "to --out)")
@@ -648,7 +810,7 @@ def main() -> None:
 
     if args.isotope not in SCOUT_ANCHORS:
         raise SystemExit(f"no gain-scout anchors for {args.isotope} — only "
-                         f"{sorted(SCOUT_ANCHORS)} can be diagnosed")
+                         f"{sorted(SCOUT_ANCHORS)} can be reported")
     args.out.mkdir(parents=True, exist_ok=True)
 
     with get_session() as session:
@@ -672,7 +834,7 @@ def main() -> None:
             outputs = [o for o in outputs if o.id not in calibrated]
         if not outputs:
             raise SystemExit(
-                f"nothing to diagnose: no '{args.tf_label}' outputs for run "
+                f"nothing to report: no '{args.tf_label}' outputs for run "
                 f"{args.run} segment {args.segment}"
                 + (f" pixels {args.pixels}" if args.pixels
                    else " without a calibration"))
@@ -696,27 +858,46 @@ def main() -> None:
                                                   energy_hi),
             "member_label": args.member_label,
             "calibration_label": args.calibration_label,
+            "dwell_split": not args.no_dwell_split,
             "out": None if args.no_plot else args.out,
         }
         print(f"run {args.run} segment {args.segment} ({args.tf_label}"
               f"{f', HV {run_hv} kV' if run_hv is not None else ''}): "
-              f"diagnosing {len(outputs)} pixel(s) — K lines fitted "
+              f"reporting {len(outputs)} pixel(s) — K lines fitted "
               f"individually, nothing stored")
 
         rows = []
         for pixel, source_id, tfo_id in outputs:
             tfo = session.get(TrapFilterOutput, tfo_id)
-            row = diagnose_pixel(session, args.run, args.segment, pixel,
-                                 source_id, tfo, ctx)
-            rows.append(row)
+            report = report_pixel(session, args.run, args.segment, pixel,
+                                  source_id, tfo, ctx)
+            rows.append(report["row"])
+            if report["split"] and ctx["dwell_split"]:
+                rows.extend(dwell_reports(session, args.run, pixel,
+                                          source_id, report, ctx))
 
+    # The CSV accumulates: rows of pixels reported earlier for this run
+    # segment are kept, rows of the pixels reported now (merged row and
+    # dwell rows alike) are replaced — reporting one more pixel never
+    # erases the others. Columns follow the current version; rows from
+    # an older version keep their values and get blanks for new columns.
     csv_path = args.out / (f"Run{args.run}_seg{args.segment}"
-                           "_low_gain_diagnosis.csv")
+                           "_uncalibrated_pixel_report.csv")
+    reported = {row["pixel"] for row in rows}
+    kept = []
+    if csv_path.exists():
+        with open(csv_path, newline="") as fh:
+            kept = [old for old in csv.DictReader(fh)
+                    if int(old["pixel"]) not in reported]
     with open(csv_path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0]), restval="",
+                                extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
-    print(f"\n{len(rows)} pixel(s) diagnosed -> {csv_path}"
+        writer.writerows(sorted(kept + rows, key=lambda r: (int(r["pixel"]),
+                                                            int(r["segment"]))))
+    print(f"\n{len(rows)} row(s) for {len(outputs)} pixel(s) -> {csv_path}"
+          + (f" ({len(kept)} earlier row(s) of other pixels kept)" if kept
+             else "")
           + ("" if args.no_plot else f" (figures in {args.out}/)"))
 
 
