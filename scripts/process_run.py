@@ -162,9 +162,13 @@ def main() -> None:
                   "already in the database — continuing with stored data.")
 
     with get_session() as session:
+        # negative indices are MERGED segments (scripts/merge_segments.py):
+        # derived from recorded dwells, never filtered from the h5 files,
+        # and fitted on their own label — the pipeline leaves them alone
         segments = session.scalars(
             select(RunSegment.segment_index)
-            .where(RunSegment.run_number == run_number)
+            .where(RunSegment.run_number == run_number,
+                   RunSegment.segment_index >= 0)
             .order_by(RunSegment.segment_index)).all()
         problems = preflight(session, run_number)
     if not segments:

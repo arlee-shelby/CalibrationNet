@@ -48,6 +48,38 @@ def subrun_file(directory, run_number: int, subrun: int) -> Path:
     return Path(directory) / f"Run{run_number}_{subrun}.h5"
 
 
+def pixel_map(path) -> dict:
+    """{board channel: pixel} straight from the file's own
+    Parameters/BoardChannelToPixelMap.
+
+    Used instead of nabPy's 'pixel' header column: nabPy's DAQ 2.0 reader
+    assigns pixels by map ROW POSITION rather than by the channel number
+    in each row, so with a few rows missing it mislabeled 170 of 210
+    channels of run 10081 (2026-10). Channels absent from the map get -1,
+    which the ingest skips as junk (spare channels 221-231 on DAQ 2.0).
+
+    A channel can appear in several rows: the old DAQ wrote a padding row
+    [bc, 0] next to the real row for board channel 0 (pixel 51). A real
+    pixel wins over a junk row (0 or -1); two different real pixels for
+    one channel is a map error and raises. With that rule the old-DAQ
+    files agree with nabPy on every channel (scripts/check_pixel_map.py)."""
+    import h5py
+    with h5py.File(path, "r") as f:
+        rows = f["Parameters/BoardChannelToPixelMap"][()]
+    bc_to_pixel = {}
+    for board_channel, pixel in rows:
+        board_channel, pixel = int(board_channel), int(pixel)
+        current = bc_to_pixel.get(board_channel)
+        if current is None or current <= 0:
+            # first row for this channel, or a junk row a real pixel may replace
+            if current is None or pixel > 0:
+                bc_to_pixel[board_channel] = pixel
+        elif pixel > 0 and pixel != current:
+            raise ValueError(f"{path}: board channel {board_channel} maps to both pixel {current} "
+                             f"and pixel {pixel} — the file's BoardChannelToPixelMap is inconsistent")
+    return bc_to_pixel
+
+
 def _waves_and_headers(nab, path: Path, wave_type: str):
     """Obtain the waves and headers for the wave type specified. This uses the nabPy "File" class
     which is specifically optimized to parse one file.
@@ -187,7 +219,10 @@ def segment_energies(directory,run_number: int,subruns,risetime: int,flattop: in
         if hasattr(energies, "compute"):
             energies = energies.compute()
 
-        pixels = headers["pixel"].values
+        # pixel from the file's own map by board channel, not from nabPy's
+        # 'pixel' column (see pixel_map)
+        bc_to_pixel = pixel_map(path)
+        pixels = headers["bc"].map(lambda bc: bc_to_pixel.get(int(bc), -1)).values
         if mask is not None:
             energies, pixels = energies[mask], pixels[mask]
 

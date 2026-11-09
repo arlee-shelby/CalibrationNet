@@ -93,9 +93,13 @@ def segments_missing_output(session: Session,run_numbers,trap_rise: float,trap_f
     ).all())
 
     missing_segments = defaultdict(list)
+    # recorded dwells only: a negative index is a MERGED segment
+    # (scripts/merge_segments.py), derived from other dwells' outputs and
+    # never filtered from the h5 files
     for run_number, segment_index in session.execute(
         select(RunSegment.run_number, RunSegment.segment_index)
-        .where(RunSegment.run_number.in_(run_numbers))
+        .where(RunSegment.run_number.in_(run_numbers),
+               RunSegment.segment_index >= 0)
         .order_by(RunSegment.run_number, RunSegment.segment_index)
     ).all():
         if (run_number, segment_index) not in segments_with_filter_outputs:
@@ -163,9 +167,10 @@ def ingest_filter_output(session: Session,run_number: int,path,trap_falltime: Op
     energies_per_pixel, skipped_rows = read_filter_output(path)
     if skipped_rows:
         print(f"note: skipped {skipped_rows} empty/NaN energy rows in {path}")
-    # pixel 0 is the replay's catch-all for board channels with no pixel physically plugged in;
-    # pixel 58 (and 1058) has no electronics
-    for junk_pixel in (0, 58, 1058):
+    # pixel 0 is the old replay's catch-all for board channels with no pixel physically plugged
+    # in, and -1 is the DAQ 2.0 label for the same thing (first seen on run 10081, 2026-10: 3% of
+    # its waveforms); pixel 58 (and 1058) has no electronics
+    for junk_pixel in (-1, 0, 58, 1058):
         junk = energies_per_pixel.pop(junk_pixel, None)
         if junk is not None:
             print(f"note: skipped pixel {junk_pixel} (junk channels, "

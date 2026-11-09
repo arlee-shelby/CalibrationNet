@@ -35,3 +35,5 @@ calibration_plots_recovered/
 
 # per-file review folders for the prepared-draft cleanup method (docs/cleanup_plan.md, method v2)
 cleanup_review/
+.ipynb_checkpoints/
+Untitled*.ipynb

@@ -69,11 +69,16 @@ fi
 START=$((OFFSET + SLURM_ARRAY_TASK_ID * CHUNK + 1))
 FAILED=0
 for LINE in $(seq "$START" $((START + CHUNK - 1))); do
-    read -r RUN SEGMENT < <(sed -n "${LINE}p" "$MANIFEST")
-    if [ -z "${RUN:-}" ]; then
+    # read the line into a variable first: a bare `read` at the end of the
+    # manifest returns 1 and, under set -e, kills the last task of every
+    # array whose segment count is not a multiple of CHUNK (same fix as
+    # fit_spectra.sh, 2026-10-14)
+    ENTRY=$(sed -n "${LINE}p" "$MANIFEST")
+    if [ -z "$ENTRY" ]; then
         echo "manifest $MANIFEST ends before line $LINE — chunk done"
         break
     fi
+    read -r RUN SEGMENT <<< "$ENTRY"
     echo "task ${SLURM_ARRAY_TASK_ID} -> run ${RUN} segment ${SEGMENT}"
     python scripts/apply_trap_filter.py \
         -d "$H5_DIR" -r "$RUN" -s "$SEGMENT" \

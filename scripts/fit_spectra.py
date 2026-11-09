@@ -31,6 +31,13 @@ run, including the statistics-gate skips, to
     python scripts/fit_spectra.py --run 8622 --pixels 60
     python scripts/fit_spectra.py --run 9327                # every pixel
     python scripts/fit_spectra.py --run 8622 --pixels 60 --plot fit_plots/
+
+The statistics gate (fit_recipes.STATS_GATE) can be lowered for one
+invocation with --min-window-counts / --min-peak-height — a deliberate
+exception for a specific pixel whose lines are clean but whose counts
+fall just short (first case: run 10075 merged segment -1, pixel 91).
+Fits admitted under an override record it in their config
+("gate_override": the bars used and the pixel's own gate numbers).
 """
 import argparse
 import csv
@@ -79,6 +86,19 @@ def main() -> None:
     parser.add_argument("--isotope", default=None,
                         help="force this isotope's recipes instead of "
                              "using each pixel's assigned source")
+    parser.add_argument("--min-window-counts", type=int, default=None,
+                        metavar="N",
+                        help="override the statistics gate's minimum CE-"
+                             "window counts (fit_recipes.STATS_GATE) for "
+                             "this invocation only — a deliberate, "
+                             "per-pixel exception (ex: run 10075 seg -1 "
+                             "pixel 91, clean lines at 12,825 counts). "
+                             "Every fit stored under an override records "
+                             "it in its config as gate_override.")
+    parser.add_argument("--min-peak-height", type=float, default=None,
+                        metavar="H",
+                        help="override the gate's minimum CE peak height "
+                             "the same way")
     parser.add_argument("--plot", type=Path, default=Path("fit_plots"),
                         metavar="DIR",
                         help="save a figure per fit here (default "
@@ -115,6 +135,20 @@ def main() -> None:
         args.plot = None
     if args.plot is not None:
         args.plot.mkdir(parents=True, exist_ok=True)
+
+    # Statistics-gate override (AS, 2026-10-18): the gate's bars are
+    # the isotope's STATS_GATE entry unless this invocation lowers
+    # them for a deliberate exception. Fits admitted this way are
+    # ordinary recipe fits with an extra config key (below).
+    gate_override = {}
+    if args.min_window_counts is not None:
+        gate_override["min_window_counts"] = args.min_window_counts
+    if args.min_peak_height is not None:
+        gate_override["min_peak_height"] = args.min_peak_height
+    if gate_override:
+        print(f"statistics gate OVERRIDDEN for this invocation: "
+              f"{gate_override} — recorded in each stored fit's config "
+              "as gate_override")
 
     fitted = failed = skipped = 0
     failure_rows = []      # rows for the failure review CSVs
@@ -213,6 +247,8 @@ def main() -> None:
             # Auger signal can mean a WORSE pixel (the unexplained
             # ~62 ADC line dominates dead pixels).
             gate = STATS_GATE.get(isotope)
+            if gate is not None and gate_override:
+                gate = {**gate, **gate_override}
             gate_numbers = None
             if gate is not None and recipes:
                 hist_all, _ = np.histogram(data, bins=np.arange(0, 4500))
@@ -235,7 +271,8 @@ def main() -> None:
                           f"(CE window counts={int(window.sum())}, "
                           f"peak height={peak_height:.0f}; gate needs "
                           f">={gate['min_window_counts']} and "
-                          f">={gate['min_peak_height']})")
+                          f">={gate['min_peak_height']}"
+                          f"{' — OVERRIDDEN' if gate_override else ''})")
                     # No figure for gate skips (AS 2026-08-24): only
                     # pixels that enter the retry ladder get plots —
                     # the CSV row records the gate numbers.
@@ -369,6 +406,18 @@ def main() -> None:
 
                     config["recipe_isotope"] = isotope
                     config["assigned_isotope"] = assigned
+                    if gate_override:
+                        # The bar this fit was admitted under AND the
+                        # pixel's own numbers, so an overridden fit is
+                        # identifiable forever (the stored fit itself is
+                        # a normal recipe fit).
+                        config["gate_override"] = {
+                            **gate_override,
+                            "ce_window_counts":
+                                gate_numbers[0] if gate_numbers else None,
+                            "ce_peak_height":
+                                (round(gate_numbers[1])
+                                 if gate_numbers else None)}
                     fit = SpectrumFit.from_lmfit(
                         result,
                         trap_filter_output=tfo,
